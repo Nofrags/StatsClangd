@@ -343,8 +343,8 @@ collect_chunk_two_passes(){
   local out_exports="${OUT_DIR}/exports/${day}"
   mkdir -p "$out_exports"
 
-  local export_name="${EXPORT_BASENAME}-${chunk}.json"   # file name in workspace root
-  local export_file="${PROJECT_ROOT}/${export_name}"     # actual location (workspace root)
+  local export_name="${EXPORT_BASENAME}-${chunk}"           # file name in workspace root
+  local export_file="${PROJECT_ROOT}/${export_name}.json"   # actual location (workspace root)
   local merged_chunk_output="${out_exports}/${EXPORT_BASENAME}-${chunk}.json"
 
   local -a pass_dirs=("$REL_SRCLIB" "$REL_INCLUDE")
