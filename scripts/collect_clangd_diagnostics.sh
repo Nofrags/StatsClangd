@@ -423,12 +423,19 @@ print_requirements(){
 }
 
 main(){
-  # --- Vérification prérequis (affiche seulement si problème) ---
-  print_requirements_if_missing
+  print_requirements
 
-  # --- Détermination poll seconds ---
-  local poll
-  poll="$(get_poll_seconds)"
+  cleanup_problems_as_file(){
+    set_problems_as_file "${EXPORT_BASENAME}.json" "False" >/dev/null || true
+  }
+  trap cleanup_problems_as_file EXIT INT TERM
+
+  if [[ -z "$SRC_ROOT" || ! -d "$SRC_ROOT" ]]; then
+    die "--src-root invalide. Donne le bon chemin (actuel: $SRC_ROOT)."
+  fi
+
+  local poll="$POLL_SECONDS"
+  [[ -n "$poll" ]] || poll="$(get_poll_seconds)"
 
   # Conversion CSV -> tableau Bash
   IFS=',' read -r -a SOU_SUBDIRS_ARRAY <<< "$SOU_SUBDIRS"

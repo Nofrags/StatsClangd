@@ -13,6 +13,7 @@ def sanitize_csv_cell(value: Any) -> str:
         return "'" + text
     return text
 
+
 def get_code(d: Dict[str, Any]) -> Optional[str]:
     code = d.get("code")
     if isinstance(code, dict):
@@ -21,11 +22,13 @@ def get_code(d: Dict[str, Any]) -> Optional[str]:
         return code
     return None
 
+
 def get_file(d: Dict[str, Any]) -> Optional[str]:
     fp = d.get("resource") or d.get("file") or d.get("uri") or d.get("path")
     if isinstance(fp, dict):
         fp = fp.get("path") or fp.get("fsPath") or fp.get("uri")
     return str(fp) if fp else None
+
 
 def get_pos(d: Dict[str, Any]) -> Tuple[Optional[int], Optional[int]]:
     line = d.get("startLineNumber")
@@ -36,8 +39,11 @@ def get_pos(d: Dict[str, Any]) -> Tuple[Optional[int], Optional[int]]:
     s = r.get("start", {}) if isinstance(r.get("start", {}), dict) else {}
     line = s.get("line")
     col = s.get("character")
-    return (int(line) if line is not None else None,
-            int(col) if col is not None else None)
+    return (
+        int(line) if line is not None else None,
+        int(col) if col is not None else None,
+    )
+
 
 def extract_items(data: Any) -> List[Dict[str, Any]]:
     if isinstance(data, list):
@@ -49,20 +55,49 @@ def extract_items(data: Any) -> List[Dict[str, Any]]:
                 return [x for x in v if isinstance(x, dict)]
     return []
 
+
+def is_valid_diagnostic_item(item: Dict[str, Any]) -> bool:
+    source = item.get("source")
+    message = item.get("message")
+    return isinstance(source, str) and isinstance(message, str)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--input", required=True, help="merged-diagnostics.json")
     ap.add_argument("--out-simple", required=True, help="CSV file;count")
-    ap.add_argument("--out-detailed", required=True, help="CSV file;line;column;code;source;message")
-    ap.add_argument("--source", default="clangd", help="Filter by source field (default clangd). Use '*' for no filter.")
-    ap.add_argument("--code", default="", help="Filter by code (e.g. unused-includes). Empty = no filter.")
-    ap.add_argument("--message-contains", default="", help="Substring filter on message.")
+    ap.add_argument(
+        "--out-detailed",
+        required=True,
+        help="CSV file;line;column;code;source;message",
+    )
+    ap.add_argument(
+        "--source",
+        default="clangd",
+        help="Filter by source field (default clangd). Use '*' for no filter.",
+    )
+    ap.add_argument(
+        "--code",
+        default="",
+        help="Filter by code (e.g. unused-includes). Empty = no filter.",
+    )
+    ap.add_argument(
+        "--message-contains", default="", help="Substring filter on message."
+    )
+    ap.add_argument(
+        "--max-items",
+        type=int,
+        default=0,
+        help="Maximum number of diagnostics to process after filtering (0 = no limit).",
+    )
     args = ap.parse_args()
 
     try:
         input_size = os.path.getsize(args.input)
     except OSError as exc:
-        print(f"ERROR: impossible de lire la taille du fichier d'entrée: {exc}", file=sys.stderr)
+        print(
+            f"ERROR: impossible de lire la taille du fichier d'entrée: {exc}", file=sys.stderr
+        )
         sys.exit(2)
 
     if input_size > MAX_INPUT_SIZE_BYTES:
@@ -81,20 +116,33 @@ def main():
         sys.exit(2)
 
     items = extract_items(data)
+    valid_items = [d for d in items if is_valid_diagnostic_item(d)]
+    skipped_count = len(items) - len(valid_items)
+    if skipped_count:
+        print(
+            f"WARN: {skipped_count} diagnostic(s) ignoré(s) car format invalide (source/message).",
+            file=sys.stderr,
+        )
 
     def keep(d: Dict[str, Any]) -> bool:
         if args.source != "*":
-            if str(d.get("source", "")) != args.source:
+            if d.get("source") != args.source:
                 return False
         if args.code:
             if get_code(d) != args.code:
                 return False
         if args.message_contains:
-            if args.message_contains not in str(d.get("message", "")):
+            if args.message_contains not in d.get("message", ""):
                 return False
         return True
 
-    filtered = [d for d in items if keep(d)]
+    filtered = [d for d in valid_items if keep(d)]
+
+    if args.max_items < 0:
+        print("ERROR: --max-items doit être >= 0", file=sys.stderr)
+        sys.exit(2)
+    if args.max_items > 0:
+        filtered = filtered[: args.max_items]
 
     per_file = Counter()
     for d in filtered:
@@ -114,14 +162,17 @@ def main():
         for d in filtered:
             fp = get_file(d) or ""
             line, col = get_pos(d)
-            w.writerow([
-                sanitize_csv_cell(fp),
-                line if line is not None else "",
-                col if col is not None else "",
-                sanitize_csv_cell(get_code(d) or ""),
-                sanitize_csv_cell(d.get("source", "")),
-                sanitize_csv_cell(d.get("message", "")),
-            ])
+            w.writerow(
+                [
+                    sanitize_csv_cell(fp),
+                    line if line is not None else "",
+                    col if col is not None else "",
+                    sanitize_csv_cell(get_code(d) or ""),
+                    sanitize_csv_cell(d.get("source", "")),
+                    sanitize_csv_cell(d.get("message", "")),
+                ]
+            )
+
 
 if __name__ == "__main__":
     main()
