@@ -1,7 +1,17 @@
 #!/usr/bin/env python3
-import argparse, json, csv
+import argparse, csv, json, os, sys
 from collections import Counter
 from typing import Any, Dict, List, Optional, Tuple
+
+MAX_INPUT_SIZE_BYTES = 100 * 1024 * 1024  # 100 MiB safety guard
+
+
+def sanitize_csv_cell(value: Any) -> str:
+    """Prevent spreadsheet formula injection when CSV is opened in office tools."""
+    text = str(value) if value is not None else ""
+    if text.startswith(("=", "+", "-", "@")):
+        return "'" + text
+    return text
 
 def get_code(d: Dict[str, Any]) -> Optional[str]:
     code = d.get("code")
@@ -49,8 +59,26 @@ def main():
     ap.add_argument("--message-contains", default="", help="Substring filter on message.")
     args = ap.parse_args()
 
-    with open(args.input, "r", encoding="utf-8") as f:
-        data = json.load(f)
+    try:
+        input_size = os.path.getsize(args.input)
+    except OSError as exc:
+        print(f"ERROR: impossible de lire la taille du fichier d'entrée: {exc}", file=sys.stderr)
+        sys.exit(2)
+
+    if input_size > MAX_INPUT_SIZE_BYTES:
+        print(
+            f"ERROR: fichier d'entrée trop volumineux ({input_size} octets). "
+            f"Limite: {MAX_INPUT_SIZE_BYTES} octets.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    try:
+        with open(args.input, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except json.JSONDecodeError as exc:
+        print(f"ERROR: JSON invalide: {exc}", file=sys.stderr)
+        sys.exit(2)
 
     items = extract_items(data)
 
@@ -78,7 +106,7 @@ def main():
         w = csv.writer(f, delimiter=";")
         w.writerow(["file", "count"])
         for fp, n in per_file.most_common():
-            w.writerow([fp, n])
+            w.writerow([sanitize_csv_cell(fp), n])
 
     with open(args.out_detailed, "w", encoding="utf-8", newline="") as f:
         w = csv.writer(f, delimiter=";")
@@ -86,8 +114,14 @@ def main():
         for d in filtered:
             fp = get_file(d) or ""
             line, col = get_pos(d)
-            w.writerow([fp, line if line is not None else "", col if col is not None else "",
-                        get_code(d) or "", d.get("source", ""), d.get("message", "")])
+            w.writerow([
+                sanitize_csv_cell(fp),
+                line if line is not None else "",
+                col if col is not None else "",
+                sanitize_csv_cell(get_code(d) or ""),
+                sanitize_csv_cell(d.get("source", "")),
+                sanitize_csv_cell(d.get("message", "")),
+            ])
 
 if __name__ == "__main__":
     main()
