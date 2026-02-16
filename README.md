@@ -1,2 +1,16 @@
-# StatsClangd
-Permet d'extraire et de faire des stats sur les erreurs de clangd.
+# clangd-diagnostics-collector
+
+Collecte des diagnostics `clangd` depuis VS Code via l'extension **problems-as-file**, par morceaux (chunks), afin d'éviter la saturation de VS Code sur de gros workspaces.
+
+## Prérequis
+
+- VS Code côté serveur (Remote / WSL / SSH)
+- Extension:
+  - `clangd` (`llvm-vs-code-extensions.vscode-clangd`)
+  - `problems-as-file` (nom variable, cherchez "problems as file")
+
+Installation (si autorisé) :
+
+```bash
+code --install-extension llvm-vs-code-extensions.vscode-clangd
+code --install-extension problems-as-file
