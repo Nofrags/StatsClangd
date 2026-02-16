@@ -99,8 +99,7 @@ need date
 need code || echo "WARN: 'code' CLI non trouvé. Exécute depuis un terminal intégré VS Code (Remote)."
 
 PROJECT_ROOT="$(cd "$PROJECT_ROOT" && pwd)"
-[[ -n "$SRC_ROOT" ]] || SRC_ROOT="${PROJECT_ROOT}/sources"
-SRC_ROOT="$(cd "$PROJECT_ROOT/$SRC_ROOT" 2>/dev/null && pwd || true)"
+[[ -n "$SRC_ROOT" ]] || SRC_ROOT="sources/tpta-srv2"
 
 [[ -n "$OUT_DIR" ]] || OUT_DIR="${PROJECT_ROOT}/clangd_diagnostics_out"
 mkdir -p "$OUT_DIR"
@@ -186,15 +185,17 @@ print_chunks_summary(){
   echo " RESUME AVANT COLLECTE"
   echo "=============================================================="
   echo "PROJECT_ROOT  : $PROJECT_ROOT"
-  echo "SRC_ROOT      : $SRC_ROOT"
+  echo "SRC_ROOT      : $PROJECT_ROOT/$SRC_ROOT"
   echo "OUT_DIR       : $OUT_DIR"
   echo "SETTINGS_JSON : $SETTINGS_JSON"
   echo
   echo "Chunks (sou/<chunk>) et sous-dossiers attendus : srclib + include"
   echo
 
+  local isAllDirIsPresent=1
+
   for rep in "${SOU_SUBDIRS_ARRAY[@]}"; do
-    local base="$SRC_ROOT/sou/$rep"
+    local base="$PROJECT_ROOT/$SRC_ROOT/sou/$rep"
     local srclib="$base/srclib"
     local include="$base/include"
 
@@ -202,12 +203,14 @@ print_chunks_summary(){
     local st_srclib="MISSING"
     local st_inc="MISSING"
 
-    [[ -d "$base" ]] && st_base="OK"
-    [[ -d "$srclib" ]] && st_srclib="OK"
-    [[ -d "$include" ]] && st_inc="OK"
+    [[ -d "$base" ]] && st_base="OK" || isAllDirIsPresent=0
+    [[ -d "$srclib" ]] && st_srclib="OK" || isAllDirIsPresent=0
+    [[ -d "$include" ]] && st_inc="OK" || isAllDirIsPresent=0
 
     printf " - %-12s rep:%-7s  srclib:%-7s  include:%-7s\n" "$rep" "$st_base" "$st_srclib" "$st_inc"
   done
+
+  [[ $isAllDirIsPresent -eq 0 ]] && die "Au moins un répertoire n'est pas présent."
 
   echo "=============================================================="
   echo
@@ -332,8 +335,8 @@ collect_chunk_two_passes(){
   local chunk="$1"
   local poll="$2"
 
-  local chunk_root="${SRC_ROOT}/sou/${chunk}"
-  [[ -d "$chunk_root" ]] || { echo "WARN: chunk absent: $chunk_root (skip)"; return 0; }
+  local chunk_root="${PROJECT_ROOT}/${SRC_ROOT}/sou/${chunk}"
+  [[ -d "$chunk_root" ]] || die "chunk absent pendant la collecte: $chunk_root"
 
   local day
   day="$(date +%F)"
@@ -392,39 +395,6 @@ collect_chunk_two_passes(){
   echo "OK: chunk fusionné -> $merged_chunk_output"
 }
 
-print_requirements(){
-  echo "=============================================================="
-  echo " PREREQUIS AVANT LANCEMENT DE LA COLLECTE"
-  echo "=============================================================="
-  echo
-  echo "Extensions VS Code nécessaires (en Remote) :"
-  echo "  - clangd  (llvm-vs-code-extensions.vscode-clangd)"
-  echo "  - problems-as-file (nom exact variable selon marketplace)"
-  echo
-  echo "Commandes d'installation (si autorisé) :"
-  echo "  code --install-extension llvm-vs-code-extensions.vscode-clangd"
-  echo "  code --install-extension problems-as-file"
-  echo
-  echo "Contrôle des extensions installées :"
-  if code --list-extensions 2>/dev/null | grep -q "llvm-vs-code-extensions.vscode-clangd"; then
-    echo "  OK   clangd (llvm-vs-code-extensions.vscode-clangd)"
-  else
-    echo "  WARN clangd non détecté : llvm-vs-code-extensions.vscode-clangd"
-  fi
-  if code --list-extensions 2>/dev/null | grep -qi "problems-as-file"; then
-    echo "  OK   problems-as-file (détecté via grep)"
-  else
-    echo "  WARN problems-as-file non détecté (grep problems-as-file)"
-  fi
-  echo
-  echo "NOTE: ce script collecte TOUS les diagnostics clangd (pas de filtre)."
-  echo "      On générera ensuite des rapports filtrés (ex: unused-includes)."
-  echo
-  echo "Appuyez sur ENTREE pour continuer..."
-  echo "=============================================================="
-  read -r
-}
-
 main(){
   print_requirements_if_missing
 
@@ -433,13 +403,8 @@ main(){
   }
   trap cleanup_problems_as_file EXIT INT TERM
 
-  cleanup_problems_as_file(){
-    set_problems_as_file "${EXPORT_BASENAME}.json" "False" >/dev/null || true
-  }
-  trap cleanup_problems_as_file EXIT INT TERM
-
-  if [[ -z "$SRC_ROOT" || ! -d "$SRC_ROOT" ]]; then
-    die "--src-root invalide. Donne le bon chemin (actuel: $SRC_ROOT)."
+  if [[ -z "$SRC_ROOT" || ! -d "$PROJECT_ROOT/$SRC_ROOT" ]]; then
+    die "--src-root invalide. Donne le bon chemin (actuel: $PROJECT_ROOT/$SRC_ROOT)."
   fi
 
   local poll="$POLL_SECONDS"
