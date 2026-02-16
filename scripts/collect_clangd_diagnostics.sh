@@ -52,14 +52,15 @@ USAGE
 # Defaults
 PROJECT_ROOT="$(pwd)"
 SRC_ROOT=""                 # computed later
-SOU_SUBDIRS="base,aggreg,webservices"
+#SOU_SUBDIRS=("base" "aggreg" "webservices")
+SOU_SUBDIRS="${SOU_SUBDIRS:-base,aggreg,webservices}"
 REL_SRCLIB="srclib"
 REL_INCLUDE="include"
 SETTINGS_JSON="${HOME}/.vscode-server/data/Machine/settings.json"
 EXPORT_BASENAME="project-problems"   # on ajoute -<chunk> etc.
 OUT_DIR=""                  # computed later
-BATCH_SIZE="40"
-BATCH_SLEEP="0.6"
+BATCH_SIZE="1"
+BATCH_SLEEP="0.5"
 POLL_SECONDS_DEFAULT="5"
 POLL_SECONDS=""             # computed later
 MAX_CYCLES="24"
@@ -99,7 +100,7 @@ need code || echo "WARN: 'code' CLI non trouvé. Exécute depuis un terminal int
 
 PROJECT_ROOT="$(cd "$PROJECT_ROOT" && pwd)"
 [[ -n "$SRC_ROOT" ]] || SRC_ROOT="${PROJECT_ROOT}/sources"
-SRC_ROOT="$(cd "$SRC_ROOT" 2>/dev/null && pwd || true)"
+SRC_ROOT="$(cd "$PROJECT_ROOT/$SRC_ROOT" 2>/dev/null && pwd || true)"
 
 [[ -n "$OUT_DIR" ]] || OUT_DIR="${PROJECT_ROOT}/clangd_diagnostics_out"
 mkdir -p "$OUT_DIR"
@@ -122,6 +123,96 @@ if v is None:
   sys.exit(3)
 print(v)
 '
+
+has_extension(){
+  local needle="$1"
+  code --list-extensions 2>/dev/null | grep -qi -- "$needle"
+}
+
+check_prereqs(){
+  local missing=0
+
+  # commandes
+  command -v python3 >/dev/null 2>&1 || { echo "MANQUE: python3"; missing=1; }
+  command -v stat   >/dev/null 2>&1 || { echo "MANQUE: stat"; missing=1; }
+  command -v find   >/dev/null 2>&1 || { echo "MANQUE: find"; missing=1; }
+  command -v code   >/dev/null 2>&1 || { echo "MANQUE: code (CLI VS Code)"; missing=1; }
+
+  # compile_commands.json
+  if [[ ! -f "$PROJECT_ROOT/compile_commands.json" ]]; then
+    echo "MANQUE: $PROJECT_ROOT/compile_commands.json"
+    missing=1
+  fi
+
+  # extensions VS Code (si code est dispo)
+  if command -v code >/dev/null 2>&1; then
+    has_extension "llvm-vs-code-extensions.vscode-clangd" || { echo "MANQUE: extension clangd (llvm-vs-code-extensions.vscode-clangd)"; missing=1; }
+    has_extension "problems-as-file" || { echo "MANQUE: extension problems-as-file (recherche 'problems-as-file')"; missing=1; }
+  fi
+
+  return "$missing"
+}
+
+print_requirements_if_missing(){
+  if check_prereqs; then
+    # OK, rien ne manque => pas de cartouche
+    return 0
+  fi
+
+  echo
+  echo "=============================================================="
+  echo " PREREQUIS MANQUANTS - ACTION REQUISE"
+  echo "=============================================================="
+  echo
+  echo "Extensions VS Code nécessaires (en Remote) :"
+  echo "  - clangd  (llvm-vs-code-extensions.vscode-clangd)"
+  echo "  - problems-as-file"
+  echo
+  echo "Commandes d'installation (si autorisé) :"
+  echo "  code --install-extension llvm-vs-code-extensions.vscode-clangd"
+  echo "  code --install-extension problems-as-file"
+  echo
+  echo "Vérifiez aussi :"
+  echo "  - compile_commands.json présent dans ET_ROOT"
+  echo "  - exécution depuis un terminal VS Code Remote (CLI 'code' dispo)"
+  echo
+  echo "Corrigez les prérequis puis relancez le script."
+  echo "=============================================================="
+  exit 1
+}
+
+print_chunks_summary(){
+  echo "=============================================================="
+  echo " RESUME AVANT COLLECTE"
+  echo "=============================================================="
+  echo "PROJECT_ROOT  : $PROJECT_ROOT"
+  echo "SRC_ROOT      : $SRC_ROOT"
+  echo "OUT_DIR       : $OUT_DIR"
+  echo "SETTINGS_JSON : $SETTINGS_JSON"
+  echo
+  echo "Chunks (sou/<chunk>) et sous-dossiers attendus : srclib + include"
+  echo
+
+  for rep in "${SOU_SUBDIRS_ARRAY[@]}"; do
+    local base="$SRC_ROOT/sou/$rep"
+    local srclib="$base/srclib"
+    local include="$base/include"
+
+    local st_base="MISSING"
+    local st_srclib="MISSING"
+    local st_inc="MISSING"
+
+    [[ -d "$base" ]] && st_base="OK"
+    [[ -d "$srclib" ]] && st_srclib="OK"
+    [[ -d "$include" ]] && st_inc="OK"
+
+    printf " - %-12s rep:%-7s  srclib:%-7s  include:%-7s\n" "$rep" "$st_base" "$st_srclib" "$st_inc"
+  done
+
+  echo "=============================================================="
+  echo
+}
+
 
 get_poll_seconds(){
   local v
@@ -161,8 +252,8 @@ PY
 
 open_files_in_dir(){
   local dir="$1"
-  local batch_size="${2:-40}"
-  local batch_sleep="${3:-0.6}"
+  local batch_size="${2:-1}"
+  local batch_sleep="${3:-0.5}"
 
   mapfile -t files < <(find "$dir" -type f \( -name "*.c" -o -name "*.h" \) | sort)
   if [[ ${#files[@]} -eq 0 ]]; then
@@ -326,69 +417,64 @@ print_requirements(){
   echo "NOTE: ce script collecte TOUS les diagnostics clangd (pas de filtre)."
   echo "      On générera ensuite des rapports filtrés (ex: unused-includes)."
   echo
-  echo "Appuyez sur ENTREE pour démarrer la collecte..."
+  echo "Appuyez sur ENTREE pour continuer..."
   echo "=============================================================="
   read -r
 }
 
 main(){
-  print_requirements
+  # --- Vérification prérequis (affiche seulement si problème) ---
+  print_requirements_if_missing
 
-  if [[ -z "$SRC_ROOT" || ! -d "$SRC_ROOT" ]]; then
-    die "--src-root invalide. Donne le bon chemin (actuel: $SRC_ROOT)."
-  fi
+  # --- Détermination poll seconds ---
+  local poll
+  poll="$(get_poll_seconds)"
 
-  local poll="$POLL_SECONDS"
-  [[ -n "$poll" ]] || poll="$(get_poll_seconds)"
+  # Conversion CSV -> tableau Bash
+  IFS=',' read -r -a SOU_SUBDIRS_ARRAY <<< "$SOU_SUBDIRS"
 
-  echo "PROJECT_ROOT=$PROJECT_ROOT"
-  echo "SRC_ROOT=$SRC_ROOT"
-  echo "SETTINGS_JSON=$SETTINGS_JSON"
-  echo "OUT_DIR=$OUT_DIR"
-  echo "SOU_SUBDIRS=$SOU_SUBDIRS"
-  echo "POLL_SECONDS=$poll"
-  echo "MAX_CYCLES=$MAX_CYCLES / STABLE_NEEDED=$STABLE_NEEDED"
+  # --- Résumé configuration ---
+  print_chunks_summary
+
+  echo "Configuration runtime :"
+  echo "  POLL_SECONDS  = $poll"
+  echo "  NB_ATTENTE    = $MAX_CYCLES"
+  echo "  NB_STABLE     = $STABLE_NEEDED"
+  echo "  BATCH_SIZE    = $BATCH_SIZE"
+  echo "  BATCH_SLEEP   = $BATCH_SLEEP"
   echo
+  echo "Appuyez sur ENTREE pour continuer..."
+  echo "=============================================================="
+  read -r
 
-  local day
-  day="$(date +%F)"
-  local out_exports="${OUT_DIR}/exports/${day}"
-  mkdir -p "$out_exports"
+  # --- Collecte ---
+  for rep in "${SOU_SUBDIRS_ARRAY[@]}"; do
+    echo "=============================================================="
+    echo "=== Chunk: $rep"
+    echo "=============================================================="
 
-  IFS=',' read -r -a chunks <<< "$SOU_SUBDIRS"
-
-  for chunk in "${chunks[@]}"; do
-    collect_chunk_two_passes "$chunk" "$poll"
+    collect_chunk_two_passes "$rep" $BATCH_SIZE $BATCH_SLEEP
     echo
   done
 
-  # Remettre config par défaut (désactive interval)
-  set_problems_as_file "${EXPORT_BASENAME}.json" "False" >/dev/null || true
+  # --- Reset config problems-as-file ---
+  echo "Remise à l'état par défaut de problems-as-file..."
+  update_problems_as_file_settings "default" False >/dev/null || true
 
-  # Fusion globale de tous les chunks (un JSON global)
-  local inputs=""
-  for chunk in "${chunks[@]}"; do
-    f="${out_exports}/${EXPORT_BASENAME}-${chunk}.json"
-    [[ -f "$f" ]] || continue
-    inputs="${inputs}${inputs:+,}${f}"
-  done
+  # --- Fusion globale ---
+  echo
+  echo "Fusion globale des chunks..."
+  merge_jsons_and_generate_csv
 
-  if [[ -z "$inputs" ]]; then
-    die "Aucun export chunk trouvé dans $out_exports"
-  fi
-
-  python3 scripts/merge_diagnostics.py \
-    --inputs "$inputs" \
-    --output "${OUT_DIR}/merged-diagnostics-${day}.json" \
-    >/dev/null
-
-  ln -sfn "${OUT_DIR}/merged-diagnostics-${day}.json" "${OUT_DIR}/merged-diagnostics-latest.json"
-
+  echo
   echo "=============================================================="
-  echo "OK: Fusion globale terminée"
-  echo "  - ${OUT_DIR}/merged-diagnostics-${day}.json"
-  echo "  - ${OUT_DIR}/merged-diagnostics-latest.json (symlink)"
+  echo " COLLECTE TERMINEE"
   echo "=============================================================="
+  echo "Résultats disponibles dans :"
+  echo "  - $OUT_DIR/_reports_unused_includes/latest/"
+  echo "  - $OUT_DIR/$EXPORT_DIR_REL/"
+  echo
 }
+
 
 main "$@"
