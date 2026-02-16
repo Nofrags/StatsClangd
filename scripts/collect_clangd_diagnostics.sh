@@ -266,11 +266,19 @@ open_files_in_dir(){
 
   echo "Ouverture de ${#files[@]} fichiers dans $dir (batch_size=$batch_size, sleep=${batch_sleep}s)"
 
+  local total="${#files[@]}"
   local i=0
-  while [[ $i -lt ${#files[@]} ]]; do
-    local -a lot=("${files[@]:i:batch_size}")
+  while [[ $i -lt $total ]]; do
+    local remaining_before=$((total - i))
+    local current_batch_size="$batch_size"
+    if (( remaining_before < current_batch_size )); then
+      current_batch_size="$remaining_before"
+    fi
+
+    echo "  -> Batch: ouverture de ${current_batch_size} fichier(s), restant après batch: $((remaining_before - current_batch_size))"
+    local -a lot=("${files[@]:i:current_batch_size}")
     code -r "${lot[@]}" >/dev/null 2>&1 || true
-    i=$((i + batch_size))
+    i=$((i + current_batch_size))
     sleep "$batch_sleep"
   done
 }
@@ -361,11 +369,8 @@ collect_chunk_two_passes(){
     set_problems_as_file "$export_name" "True"
     rm -f "$export_file"
 
-    if [[ -d "$target_dir" ]]; then
-      open_files_in_dir "$target_dir" "$BATCH_SIZE" "$BATCH_SLEEP"
-    else
-      echo "WARN: répertoire absent: $target_dir"
-    fi
+    [[ -d "$target_dir" ]] || die "répertoire obligatoire absent pendant la collecte: $target_dir"
+    open_files_in_dir "$target_dir" "$BATCH_SIZE" "$BATCH_SLEEP"
 
     wait_file_stable "$export_file" "$poll" "$MAX_CYCLES" "$STABLE_NEEDED"
 
