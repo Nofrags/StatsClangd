@@ -35,7 +35,7 @@ Options:
   --poll-seconds SEC      Période de vérif taille fichier export                      [default: auto depuis settings ou 5]
   --max-cycles N          Cycles max d'attente stabilisation                          [default: 24]
   --stable-needed N       Nombre de tailles identiques consécutives                   [default: 3]
-  --no-compile-db-check   Ne pas vérifier compile_commands.json
+  --no-compile-db-check   Ne pas vérifier compile_commands.json                       [default: 0]
   -h, --help              Aide
 
 Exemples:
@@ -106,7 +106,7 @@ SRC_ROOT="$(cd "$PROJECT_ROOT/$SRC_ROOT" 2>/dev/null && pwd || true)"
 mkdir -p "$OUT_DIR"
 
 if [[ "$CHECK_COMPILE_DB" == "1" ]]; then
-  [[ -f "${PROJECT_ROOT}/compile_commands.json" ]] || die "compile_commands.json absent dans --project-root=$PROJECT_ROOT"
+  [[ -f "${PROJECT_ROOT}/compile_commands.json" ]] || die "compile_commands.json absent dans $PROJECT_ROOT"
 fi
 
 get_setting_value_py='
@@ -423,7 +423,7 @@ print_requirements(){
 }
 
 main(){
-  print_requirements
+  print_requirements_if_missing
 
   cleanup_problems_as_file(){
     set_problems_as_file "${EXPORT_BASENAME}.json" "False" >/dev/null || true
