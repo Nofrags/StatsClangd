@@ -333,9 +333,6 @@ collect_chunk_two_passes(){
   local poll="$2"
 
   local chunk_root="${SRC_ROOT}/sou/${chunk}"
-  local srclib="${chunk_root}/${REL_SRCLIB}"
-  local include="${chunk_root}/${REL_INCLUDE}"
-
   [[ -d "$chunk_root" ]] || { echo "WARN: chunk absent: $chunk_root (skip)"; return 0; }
 
   local day
@@ -343,50 +340,56 @@ collect_chunk_two_passes(){
   local out_exports="${OUT_DIR}/exports/${day}"
   mkdir -p "$out_exports"
 
-  # PASS 1: srclib
-  local export_name="${EXPORT_BASENAME}-${chunk}.json"       # file name in workspace root
-  local export_file="${PROJECT_ROOT}/${export_name}"         # actual location (workspace root)
-  echo "=== Chunk: $chunk | PASS 1/2: ${REL_SRCLIB}"
+  local export_name="${EXPORT_BASENAME}-${chunk}.json"   # file name in workspace root
+  local export_file="${PROJECT_ROOT}/${export_name}"     # actual location (workspace root)
+  local merged_chunk_output="${out_exports}/${EXPORT_BASENAME}-${chunk}.json"
 
-  set_problems_as_file "$export_name" "True"
-  rm -f "$export_file"
+  local -a pass_dirs=("$REL_SRCLIB" "$REL_INCLUDE")
+  local -a pass_outputs=()
 
-  if [[ -d "$srclib" ]]; then
-    open_files_in_dir "$srclib" "$BATCH_SIZE" "$BATCH_SLEEP"
-  else
-    echo "WARN: srclib absent: $srclib"
+  run_chunk_pass(){
+    local pass_index="$1"
+    local rel_dir="$2"
+    local target_dir="${chunk_root}/${rel_dir}"
+    local dst="${out_exports}/${EXPORT_BASENAME}-${chunk}-${rel_dir}.json"
+
+    echo "=== Chunk: $chunk | PASS ${pass_index}/2: ${rel_dir}"
+
+    set_problems_as_file "$export_name" "True"
+    rm -f "$export_file"
+
+    if [[ -d "$target_dir" ]]; then
+      open_files_in_dir "$target_dir" "$BATCH_SIZE" "$BATCH_SLEEP"
+    else
+      echo "WARN: répertoire absent: $target_dir"
+    fi
+
+    wait_file_stable "$export_file" "$poll" "$MAX_CYCLES" "$STABLE_NEEDED"
+
+    if copy_export "$export_file" "$dst"; then
+      pass_outputs+=("$dst")
+    fi
+
+    prompt_close_editors
+  }
+
+  run_chunk_pass 1 "${pass_dirs[0]}"
+  run_chunk_pass 2 "${pass_dirs[1]}"
+
+  if [[ ${#pass_outputs[@]} -eq 0 ]]; then
+    echo "WARN: aucun export valide pour chunk=$chunk (fusion ignorée)"
+    return 0
   fi
 
-  wait_file_stable "$export_file" "$poll" "$MAX_CYCLES" "$STABLE_NEEDED"
+  local inputs_csv
+  inputs_csv="$(IFS=,; echo "${pass_outputs[*]}")"
 
-  local dst1="${out_exports}/${EXPORT_BASENAME}-${chunk}-${REL_SRCLIB}.json"
-  copy_export "$export_file" "$dst1" || true
-  prompt_close_editors
-
-  # PASS 2: include (relancer export)
-  echo "=== Chunk: $chunk | PASS 2/2: ${REL_INCLUDE}"
-  set_problems_as_file "$export_name" "True"
-  rm -f "$export_file"
-
-  if [[ -d "$include" ]]; then
-    open_files_in_dir "$include" "$BATCH_SIZE" "$BATCH_SLEEP"
-  else
-    echo "WARN: include absent: $include"
-  fi
-
-  wait_file_stable "$export_file" "$poll" "$MAX_CYCLES" "$STABLE_NEEDED"
-
-  local dst2="${out_exports}/${EXPORT_BASENAME}-${chunk}-${REL_INCLUDE}.json"
-  copy_export "$export_file" "$dst2" || true
-  prompt_close_editors
-
-  # Fusion PASS1 + PASS2 -> un fichier chunk unique
   python3 scripts/merge_diagnostics.py \
-    --inputs "$dst1,$dst2" \
-    --output "${out_exports}/${EXPORT_BASENAME}-${chunk}.json" \
+    --inputs "$inputs_csv" \
+    --output "$merged_chunk_output" \
     >/dev/null
 
-  echo "OK: chunk fusionné -> ${out_exports}/${EXPORT_BASENAME}-${chunk}.json"
+  echo "OK: chunk fusionné -> $merged_chunk_output"
 }
 
 print_requirements(){
@@ -424,6 +427,11 @@ print_requirements(){
 
 main(){
   print_requirements_if_missing
+
+  cleanup_problems_as_file(){
+    set_problems_as_file "${EXPORT_BASENAME}.json" "False" >/dev/null || true
+  }
+  trap cleanup_problems_as_file EXIT INT TERM
 
   cleanup_problems_as_file(){
     set_problems_as_file "${EXPORT_BASENAME}.json" "False" >/dev/null || true
