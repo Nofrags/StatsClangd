@@ -37,7 +37,7 @@ Options:
   --rel-include PATH      Relatif au chunk, ex: include                               [default: include]
   --settings-json PATH    Fichier settings.json remote VS Code                        [default: ~/.vscode-server/data/Machine/settings.json]
   --export-basename NAME  Nom base export côté workspace (sans .json)                 [default: project-problems]
-  --out-dir PATH          Répertoire de sortie                                        [default: <project-root>/clangd_diagnostics_out]
+  --out-dir PATH          Répertoire de sortie                                        [default: $SCRIPT_DIR/clangd_diagnostics_out]
   --batch-size N          Taille des lots d'ouverture                                 [default: 40]
   --batch-sleep SEC       Pause entre lots                                            [default: 0.6]
   --poll-seconds SEC      Période de vérif taille fichier export                      [default: auto depuis settings ou 5]
@@ -50,7 +50,9 @@ Options:
   -h, --help              Aide
 
 Exemples:
-  scripts/collect_clangd_diagnostics.sh --project-root /path/to/project
+  scripts/collect_clangd_diagnostics.sh --project-root $ET_ROOT
+
+  scripts/collect_clangd_diagnostics.sh --merge-only
 
   scripts/collect_clangd_diagnostics.sh \
     --project-root . \
@@ -118,7 +120,7 @@ fi
 PROJECT_ROOT="$(cd "$PROJECT_ROOT" && pwd)"
 [[ -n "$SRC_ROOT" ]] || SRC_ROOT="sources/tpta-srv2"
 
-[[ -n "$OUT_DIR" ]] || OUT_DIR="${SCRIPT_DIR}/clangd_diagnostics_out"
+[[ -n "$OUT_DIR" ]] || OUT_DIR="${SCRIPT_DIR}/../clangd_diagnostics_out"
 mkdir -p "$OUT_DIR"
 
 declare -a MERGED_CHUNK_OUTPUTS=()
