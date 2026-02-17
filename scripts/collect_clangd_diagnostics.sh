@@ -109,7 +109,7 @@ need code || echo "WARN: 'code' CLI non trouvé. Exécute depuis un terminal int
 PROJECT_ROOT="$(cd "$PROJECT_ROOT" && pwd)"
 [[ -n "$SRC_ROOT" ]] || SRC_ROOT="sources/tpta-srv2"
 
-[[ -n "$OUT_DIR" ]] || OUT_DIR="${PWD}/clangd_diagnostics_out"
+[[ -n "$OUT_DIR" ]] || OUT_DIR="${PSCRIPT_DIR}/clangd_diagnostics_out"
 mkdir -p "$OUT_DIR"
 
 if [[ "$CHECK_COMPILE_DB" == "1" ]]; then
