@@ -13,6 +13,14 @@ set -euo pipefail
 #  - Le script ne peut pas piloter parfaitement l'UI VS Code en remote.
 #    Il te demande donc de fermer les éditeurs manuellement entre les passes.
 
+SOURCE_SCRIPT="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE_SCRIPT" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE_SCRIPT")" && pwd)"
+  SOURCE_SCRIPT="$(readlink "$SOURCE_SCRIPT")"
+  [[ $SOURCE_SCRIPT != /* ]] && SOURCE_SCRIPT="$DIR/$SOURCE_SCRIPT"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE_SCRIPT")" && pwd)"
+
 die(){ echo "ERROR: $*" >&2; exit 1; }
 need(){ command -v "$1" >/dev/null 2>&1 || die "Commande manquante: $1"; }
 
@@ -43,7 +51,7 @@ Exemples:
 
   scripts/collect_clangd_diagnostics.sh \
     --project-root . \
-    --src-root ./sources/tpta-srv2 \
+    --src-root ./sources/projet1 \
     --sou-subdirs base,aggreg,webservices \
     --out-dir ./_diag_out
 USAGE
@@ -85,7 +93,7 @@ while [[ $# -gt 0 ]]; do
     --stable-needed) STABLE_NEEDED="$2"; shift 2;;
     --no-compile-db-check) CHECK_COMPILE_DB="0"; shift 1;;
     -h|--help) usage; exit 0;;
-    *) die "Option inconnue: $1";;
+    *) usage; echo ; die "Option inconnue: $1";;
   esac
 done
 
@@ -101,7 +109,7 @@ need code || echo "WARN: 'code' CLI non trouvé. Exécute depuis un terminal int
 PROJECT_ROOT="$(cd "$PROJECT_ROOT" && pwd)"
 [[ -n "$SRC_ROOT" ]] || SRC_ROOT="sources/tpta-srv2"
 
-[[ -n "$OUT_DIR" ]] || OUT_DIR="${PROJECT_ROOT}/clangd_diagnostics_out"
+[[ -n "$OUT_DIR" ]] || OUT_DIR="${PWD}/clangd_diagnostics_out"
 mkdir -p "$OUT_DIR"
 
 if [[ "$CHECK_COMPILE_DB" == "1" ]]; then
@@ -207,10 +215,17 @@ print_chunks_summary(){
     [[ -d "$srclib" ]] && st_srclib="OK" || isAllDirIsPresent=0
     [[ -d "$include" ]] && st_inc="OK" || isAllDirIsPresent=0
 
-    printf " - %-12s rep:%-7s  srclib:%-7s  include:%-7s\n" "$rep" "$st_base" "$st_srclib" "$st_inc"
+    printf " - %-25s rep:%-7s  srclib:%-7s  include:%-7s\n" "$rep" "$st_base" "$st_srclib" "$st_inc"
   done
 
-  [[ $isAllDirIsPresent -eq 0 ]] && die "Au moins un répertoire n'est pas présent."
+  if [[ -f "${SCRIPT_DIR}/merge_diagnostics.py" ]]; then
+    printf " - %-25s script:OK\n" "merge_diagnostics.py"
+  else
+    echo 'Fichier de merge merge_diagnostics.py indisponible dans ${SCRIPT_DIR}.'
+    isAllDirIsPresent=0
+  fi 
+
+  [[ $isAllDirIsPresent -eq 0 ]] && die "Au moins nécéssaire n'est pas présent."
 
   echo "=============================================================="
   echo
@@ -323,20 +338,20 @@ prompt_close_editors(){
   echo "=============================================================="
   echo "ACTION MANUELLE: Fermer les éditeurs ouverts dans VS Code"
   echo "  Ctrl + Shift + P"
-  echo "  Commande : View: Close Editor (répéter si nécessaire)"
-  echo "Puis appuyez sur une touche ici pour continuer..."
+  echo "  Commande : View: Close All Editors"
   echo "=============================================================="
+  echo
   read -n 1 -s -r -p "Appuyez sur une touche pour continuer..."
   echo
 }
 
-copy_export(){
+move_export(){
   local src_file="$1"   # workspace root file
   local dst_file="$2"   # safe output
   mkdir -p "$(dirname "$dst_file")"
   [[ -f "$src_file" ]] || { echo "WARN: export introuvable: $src_file"; return 1; }
-  cp -f "$src_file" "$dst_file"
-  echo "Copié -> $dst_file"
+  mv -f "$src_file" "$dst_file"
+  echo "Déplacé $src_file -> $dst_file"
 }
 
 collect_chunk_two_passes(){
@@ -374,7 +389,9 @@ collect_chunk_two_passes(){
 
     wait_file_stable "$export_file" "$poll" "$MAX_CYCLES" "$STABLE_NEEDED"
 
-    if copy_export "$export_file" "$dst"; then
+    set_problems_as_file "$export_name" "false"
+
+    if move_export "$export_file" "$dst"; then
       pass_outputs+=("$dst")
     fi
 
@@ -384,6 +401,7 @@ collect_chunk_two_passes(){
   run_chunk_pass 1 "${pass_dirs[0]}"
   run_chunk_pass 2 "${pass_dirs[1]}"
 
+
   if [[ ${#pass_outputs[@]} -eq 0 ]]; then
     echo "WARN: aucun export valide pour chunk=$chunk (fusion ignorée)"
     return 0
@@ -392,7 +410,7 @@ collect_chunk_two_passes(){
   local inputs_csv
   inputs_csv="$(IFS=,; echo "${pass_outputs[*]}")"
 
-  python3 scripts/merge_diagnostics.py \
+  python3 ${SCRIPT_DIR}/merge_diagnostics.py \
     --inputs "$inputs_csv" \
     --output "$merged_chunk_output" \
     >/dev/null
@@ -427,10 +445,14 @@ main(){
   echo "  NB_STABLE     = $STABLE_NEEDED"
   echo "  BATCH_SIZE    = $BATCH_SIZE"
   echo "  BATCH_SLEEP   = $BATCH_SLEEP"
-  echo
-  echo "Appuyez sur ENTREE pour continuer..."
   echo "=============================================================="
-  read -r
+  echo
+  read -n 1 -s -r -p "Appuyez sur une touche pour continuer... (q pour quitter)" caractere
+  echo
+
+  if [[ "$caractere" = "q" ]]; then
+    exit 0
+  fi
 
   # --- Collecte ---
   for rep in "${SOU_SUBDIRS_ARRAY[@]}"; do
@@ -442,10 +464,6 @@ main(){
     echo
   done
 
-  # --- Reset config problems-as-file ---
-  echo "Remise à l'état par défaut de problems-as-file..."
-  update_problems_as_file_settings "default" False >/dev/null || true
-
   # --- Fusion globale ---
   echo
   echo "Fusion globale des chunks..."
@@ -455,6 +473,7 @@ main(){
   echo "=============================================================="
   echo " COLLECTE TERMINEE"
   echo "=============================================================="
+  echo
   echo "Résultats disponibles dans :"
   echo "  - $OUT_DIR/_reports_unused_includes/latest/"
   echo "  - $OUT_DIR/$EXPORT_DIR_REL/"
