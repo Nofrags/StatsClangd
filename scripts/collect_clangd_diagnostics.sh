@@ -43,6 +43,9 @@ Options:
   --poll-seconds SEC      Période de vérif taille fichier export                      [default: auto depuis settings ou 5]
   --max-cycles N          Cycles max d'attente stabilisation                          [default: 24]
   --stable-needed N       Nombre de tailles identiques consécutives                   [default: 3]
+  --merge-only            Ne faire que la fusion globale + génération CSV (pas de collecte)
+  --merge-input-dir PATH  Dossier des JSON chunk déjà fusionnés (mode --merge-only)
+                           [default: dernier dossier trouvé dans <out-dir>/exports]
   --no-compile-db-check   Ne pas vérifier compile_commands.json                       [default: 0]
   -h, --help              Aide
 
@@ -74,6 +77,8 @@ POLL_SECONDS=""             # computed later
 MAX_CYCLES="24"
 STABLE_NEEDED="3"
 CHECK_COMPILE_DB="1"
+MERGE_ONLY="0"
+MERGE_INPUT_DIR=""
 
 # Parse args
 while [[ $# -gt 0 ]]; do
@@ -91,6 +96,8 @@ while [[ $# -gt 0 ]]; do
     --poll-seconds) POLL_SECONDS="$2"; shift 2;;
     --max-cycles) MAX_CYCLES="$2"; shift 2;;
     --stable-needed) STABLE_NEEDED="$2"; shift 2;;
+    --merge-only) MERGE_ONLY="1"; shift 1;;
+    --merge-input-dir) MERGE_INPUT_DIR="$2"; shift 2;;
     --no-compile-db-check) CHECK_COMPILE_DB="0"; shift 1;;
     -h|--help) usage; exit 0;;
     *) usage; echo ; die "Option inconnue: $1";;
@@ -104,7 +111,9 @@ need find
 need mkdir
 need cp
 need date
-need code || echo "WARN: 'code' CLI non trouvé. Exécute depuis un terminal intégré VS Code (Remote)."
+if [[ "$MERGE_ONLY" != "1" ]]; then
+  need code || echo "WARN: 'code' CLI non trouvé. Exécute depuis un terminal intégré VS Code (Remote)."
+fi
 
 PROJECT_ROOT="$(cd "$PROJECT_ROOT" && pwd)"
 [[ -n "$SRC_ROOT" ]] || SRC_ROOT="sources/tpta-srv2"
@@ -115,7 +124,7 @@ mkdir -p "$OUT_DIR"
 declare -a MERGED_CHUNK_OUTPUTS=()
 EXPORT_DIR_REL=""
 
-if [[ "$CHECK_COMPILE_DB" == "1" ]]; then
+if [[ "$CHECK_COMPILE_DB" == "1" && "$MERGE_ONLY" != "1" ]]; then
   [[ -f "${PROJECT_ROOT}/compile_commands.json" ]] || die "compile_commands.json absent dans $PROJECT_ROOT"
 fi
 
@@ -487,23 +496,65 @@ PY
   echo "OK: rapports CSV générés dans ${report_dated_dir} (copie dans latest/)"
 }
 
+load_existing_merged_chunks(){
+  local input_dir="$MERGE_INPUT_DIR"
+
+  if [[ -z "$input_dir" ]]; then
+    local latest_export_dir
+    latest_export_dir="$(find "$OUT_DIR/exports" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | tail -n1 || true)"
+    [[ -n "$latest_export_dir" ]] || die "Aucun dossier d'exports trouvé dans $OUT_DIR/exports (utilise --merge-input-dir)."
+    input_dir="$latest_export_dir"
+  fi
+
+  [[ -d "$input_dir" ]] || die "--merge-input-dir invalide: $input_dir"
+
+  local found=0
+  for rep in "${SOU_SUBDIRS_ARRAY[@]}"; do
+    local chunk_file="${input_dir}/${EXPORT_BASENAME}-${rep}.json"
+    if [[ -f "$chunk_file" ]]; then
+      MERGED_CHUNK_OUTPUTS+=("$chunk_file")
+      found=1
+    else
+      echo "WARN: chunk absent pour fusion: $chunk_file"
+    fi
+  done
+
+  [[ "$found" == "1" ]] || die "Aucun JSON chunk utilisable dans $input_dir"
+  echo "Mode --merge-only: ${#MERGED_CHUNK_OUTPUTS[@]} chunk(s) détecté(s) dans $input_dir"
+}
+
 main(){
-  print_requirements_if_missing
+  if [[ "$MERGE_ONLY" != "1" ]]; then
+    print_requirements_if_missing
+  fi
 
-  cleanup_problems_as_file(){
-    set_problems_as_file "${EXPORT_BASENAME}.json" "False" >/dev/null || true
-  }
-  trap cleanup_problems_as_file EXIT INT TERM
+  if [[ "$MERGE_ONLY" != "1" ]]; then
+    cleanup_problems_as_file(){
+      set_problems_as_file "${EXPORT_BASENAME}.json" "False" >/dev/null || true
+    }
+    trap cleanup_problems_as_file EXIT INT TERM
+  fi
 
-  if [[ -z "$SRC_ROOT" || ! -d "$PROJECT_ROOT/$SRC_ROOT" ]]; then
+  if [[ "$MERGE_ONLY" != "1" && ( -z "$SRC_ROOT" || ! -d "$PROJECT_ROOT/$SRC_ROOT" ) ]]; then
     die "--src-root invalide. Donne le bon chemin (actuel: $PROJECT_ROOT/$SRC_ROOT)."
+  fi
+
+  # Conversion CSV -> tableau Bash
+  IFS=',' read -r -a SOU_SUBDIRS_ARRAY <<< "$SOU_SUBDIRS"
+
+  if [[ "$MERGE_ONLY" == "1" ]]; then
+    load_existing_merged_chunks
+    echo "Fusion globale des chunks (mode --merge-only)..."
+    merge_jsons_and_generate_csv
+    echo
+    echo "Résultats disponibles dans :"
+    echo "  - $OUT_DIR/_reports_unused_includes/latest/"
+    echo "  - $OUT_DIR/$EXPORT_DIR_REL/"
+    return 0
   fi
 
   local poll="$POLL_SECONDS"
   [[ -n "$poll" ]] || poll="$(get_poll_seconds)"
-
-  # Conversion CSV -> tableau Bash
-  IFS=',' read -r -a SOU_SUBDIRS_ARRAY <<< "$SOU_SUBDIRS"
 
   # --- Résumé configuration ---
   print_chunks_summary
@@ -529,7 +580,7 @@ main(){
     echo "=== Chunk: $rep"
     echo "=============================================================="
 
-    collect_chunk_two_passes "$rep" $BATCH_SIZE $BATCH_SLEEP
+    collect_chunk_two_passes "$rep" "$poll"
     echo
   done
 
