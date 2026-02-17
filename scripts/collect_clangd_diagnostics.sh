@@ -109,8 +109,11 @@ need code || echo "WARN: 'code' CLI non trouvé. Exécute depuis un terminal int
 PROJECT_ROOT="$(cd "$PROJECT_ROOT" && pwd)"
 [[ -n "$SRC_ROOT" ]] || SRC_ROOT="sources/tpta-srv2"
 
-[[ -n "$OUT_DIR" ]] || OUT_DIR="${PSCRIPT_DIR}/clangd_diagnostics_out"
+[[ -n "$OUT_DIR" ]] || OUT_DIR="${SCRIPT_DIR}/clangd_diagnostics_out"
 mkdir -p "$OUT_DIR"
+
+declare -a MERGED_CHUNK_OUTPUTS=()
+EXPORT_DIR_REL=""
 
 if [[ "$CHECK_COMPILE_DB" == "1" ]]; then
   [[ -f "${PROJECT_ROOT}/compile_commands.json" ]] || die "compile_commands.json absent dans $PROJECT_ROOT"
@@ -416,6 +419,72 @@ collect_chunk_two_passes(){
     >/dev/null
 
   echo "OK: chunk fusionné -> $merged_chunk_output"
+  MERGED_CHUNK_OUTPUTS+=("$merged_chunk_output")
+}
+
+merge_jsons_and_generate_csv(){
+  local day
+  day="$(date +%F)"
+  EXPORT_DIR_REL="exports/${day}"
+
+  local export_dir="${OUT_DIR}/${EXPORT_DIR_REL}"
+  local merged_all="${export_dir}/merged-diagnostics.json"
+  local reports_root="${OUT_DIR}/_reports_unused_includes"
+  local report_dated_dir="${reports_root}/${day}"
+  local report_latest_dir="${reports_root}/latest"
+  mkdir -p "$export_dir" "$report_dated_dir" "$report_latest_dir"
+
+  if [[ ${#MERGED_CHUNK_OUTPUTS[@]} -eq 0 ]]; then
+    echo "WARN: aucun JSON chunk à fusionner."
+    return 0
+  fi
+
+  python3 - "$merged_all" "${MERGED_CHUNK_OUTPUTS[@]}" <<'PY'
+import json
+import sys
+
+out_path = sys.argv[1]
+inputs = sys.argv[2:]
+
+def extract_items(data):
+    if isinstance(data, list):
+        return [x for x in data if isinstance(x, dict)]
+    if isinstance(data, dict):
+        for k in ("problems", "diagnostics", "items", "data"):
+            v = data.get(k)
+            if isinstance(v, list):
+                return [x for x in v if isinstance(x, dict)]
+    return []
+
+merged = []
+for p in inputs:
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            merged.extend(extract_items(json.load(f)))
+    except Exception as exc:
+        print(f"WARN: fichier ignoré ({p}): {exc}", file=sys.stderr)
+
+with open(out_path, "w", encoding="utf-8") as f:
+    json.dump(merged, f, ensure_ascii=False, indent=2)
+
+print(f"OK: JSON global fusionné -> {out_path}")
+PY
+
+  local report_simple="${report_dated_dir}/unused_includes_by_file.csv"
+  local report_detailed="${report_dated_dir}/unused_includes_detailed.csv"
+
+  python3 "${SCRIPT_DIR}/report_diagnostics.py" \
+    --input "$merged_all" \
+    --out-simple "$report_simple" \
+    --out-detailed "$report_detailed" \
+    --source "clangd" \
+    --code "unused-includes"
+
+  cp -f "$report_simple" "${report_latest_dir}/unused_includes_by_file.csv"
+  cp -f "$report_detailed" "${report_latest_dir}/unused_includes_detailed.csv"
+  cp -f "$merged_all" "${report_latest_dir}/merged-diagnostics.json"
+
+  echo "OK: rapports CSV générés dans ${report_dated_dir} (copie dans latest/)"
 }
 
 main(){
