@@ -30,23 +30,24 @@ Usage:
   scripts/collect_clangd_diagnostics.sh [options]
 
 Options:
-  --project-root PATH     Racine du workspace VS Code (contient compile_commands.json) [default: pwd]
-  --src-root PATH         Racine des sources contenant sou/<chunk>                    [default: <project-root>/sources]
-  --sou-subdirs LIST      Liste des chunks (séparés par virgule)                      [default: base,aggreg,webservices]
-  --rel-srclib PATH       Relatif au chunk, ex: srclib                                [default: srclib]
-  --rel-include PATH      Relatif au chunk, ex: include                               [default: include]
-  --settings-json PATH    Fichier settings.json remote VS Code                        [default: ~/.vscode-server/data/Machine/settings.json]
-  --export-basename NAME  Nom base export côté workspace (sans .json)                 [default: project-problems]
-  --out-dir PATH          Répertoire de sortie                                        [default: $SCRIPT_DIR/clangd_diagnostics_out]
-  --batch-size N          Taille des lots d'ouverture                                 [default: 40]
-  --batch-sleep SEC       Pause entre lots                                            [default: 0.6]
-  --poll-seconds SEC      Période de vérif taille fichier export                      [default: auto depuis settings ou 5]
-  --max-cycles N          Cycles max d'attente stabilisation                          [default: 24]
-  --stable-needed N       Nombre de tailles identiques consécutives                   [default: 3]
+  -r, --project-root PATH     Racine du workspace VS Code (contient compile_commands.json)      [default: pwd]
+  --src-root PATH         Racine des sources contenant sou/<chunk>                          [default: <project-root>/sources]
+  --sou-subdirs LIST      Liste des chunks (séparés par virgule)                            [default: base,aggreg,webservices]
+  --rel-srclib PATH       Relatif au chunk, ex: srclib                                      [default: srclib]
+  --rel-include PATH      Relatif au chunk, ex: include                                     [default: include]
+  --settings-json PATH    Fichier settings.json remote VS Code                              [default: ~/.vscode-server/data/Machine/settings.json]
+  --export-basename NAME  Nom base export côté workspace (sans .json)                       [default: project-problems]
+  --out-dir PATH          Répertoire de sortie                                              [default: $SCRIPT_DIR/clangd_diagnostics_out]
+  --batch-size N          Taille des lots d'ouverture                                       [default: 40]
+  --batch-sleep SEC       Pause entre lots                                                  [default: 0.6]
+  --poll-seconds SEC      Période de vérif taille fichier export                            [default: auto depuis settings ou 5]
+  --max-cycles N          Cycles max d'attente stabilisation                                [default: 24]
+  --stable-needed N       Nombre de tailles identiques consécutives                         [default: 3]
+  --max-merge-input-bytes N  Taille max autorisée par fichier JSON de chunk (0 = no limit)  [default: 104857600]
+  --max-merged-items N    Nombre max de diagnostics fusionnés globalement (0 = no limit)    [default: 500000]
   --merge-only            Ne faire que la fusion globale + génération CSV (pas de collecte)
-  --merge-input-dir PATH  Dossier des JSON chunk déjà fusionnés (mode --merge-only)
-                           [default: dernier dossier trouvé dans <out-dir>/exports]
-  --no-compile-db-check   Ne pas vérifier compile_commands.json                       [default: 0]
+  --merge-input-dir PATH  Dossier des JSON chunk déjà fusionnés (mode --merge-only)         [default: dernier dossier trouvé dans <out-dir>/exports]
+  --no-compile-db-check   Ne pas vérifier compile_commands.json                             [default: 0]
   -h, --help              Aide
 
 Exemples:
@@ -65,7 +66,6 @@ USAGE
 # Defaults
 PROJECT_ROOT="$(pwd)"
 SRC_ROOT=""                 # computed later
-#SOU_SUBDIRS=("base" "aggreg" "webservices")
 SOU_SUBDIRS="${SOU_SUBDIRS:-base,aggreg,webservices}"
 REL_SRCLIB="srclib"
 REL_INCLUDE="include"
@@ -81,11 +81,13 @@ STABLE_NEEDED="3"
 CHECK_COMPILE_DB="1"
 MERGE_ONLY="0"
 MERGE_INPUT_DIR=""
+MAX_MERGE_INPUT_BYTES="104857600"
+MAX_MERGED_ITEMS="500000"
 
 # Parse args
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --project-root) PROJECT_ROOT="$2"; shift 2;;
+    -r|--project-root) PROJECT_ROOT="$2"; shift 2;;
     --src-root) SRC_ROOT="$2"; shift 2;;
     --sou-subdirs) SOU_SUBDIRS="$2"; shift 2;;
     --rel-srclib) REL_SRCLIB="$2"; shift 2;;
@@ -101,6 +103,8 @@ while [[ $# -gt 0 ]]; do
     --merge-only) MERGE_ONLY="1"; shift 1;;
     --merge-input-dir) MERGE_INPUT_DIR="$2"; shift 2;;
     --no-compile-db-check) CHECK_COMPILE_DB="0"; shift 1;;
+    --max-merge-input-bytes) MAX_MERGE_INPUT_BYTES="$2"; shift 2;;
+    --max-merged-items) MAX_MERGED_ITEMS="$2"; shift 2;;
     -h|--help) usage; exit 0;;
     *) usage; echo ; die "Option inconnue: $1";;
   esac
@@ -262,23 +266,49 @@ set_problems_as_file(){
   local enabled="$2"     # True/False
 
   python3 - "$SETTINGS_JSON" "$file_name" "$enabled" <<'PY'
-import json, os, sys
+import json, os, shutil, sys
 settings_path = sys.argv[1]
 file_name     = sys.argv[2]
 enabled       = sys.argv[3].strip().lower() in ("1","true","yes","on")
 
 os.makedirs(os.path.dirname(settings_path), exist_ok=True)
-try:
-    with open(settings_path, "r", encoding="utf-8") as f:
-        d = json.load(f)
-except Exception:
-    d = {}
+d = {}
+existed_before = os.path.exists(settings_path)
+if existed_before:
+    try:
+        with open(settings_path, "r", encoding="utf-8") as f:
+            d = json.load(f)
+    except json.JSONDecodeError as exc:
+        print(f"ERROR: settings.json invalide, arrêt pour éviter un écrasement: {exc}", file=sys.stderr)
+        sys.exit(2)
+    except OSError as exc:
+        print(f"ERROR: impossible de lire settings.json: {exc}", file=sys.stderr)
+        sys.exit(2)
+
+if existed_before:
+    backup_path = settings_path + ".bak"
+    try:
+        shutil.copy2(settings_path, backup_path)
+    except OSError as exc:
+        print(f"ERROR: impossible de créer le backup {backup_path}: {exc}", file=sys.stderr)
+        sys.exit(2)
 
 d["problems-as-file.output.fileName"] = file_name
 d["problems-as-file.interval.enabled"] = enabled
 
-with open(settings_path, "w", encoding="utf-8") as f:
-    json.dump(d, f, ensure_ascii=False, indent=2)
+tmp_path = settings_path + ".tmp"
+try:
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(d, f, ensure_ascii=False, indent=2)
+    os.replace(tmp_path, settings_path)
+except OSError as exc:
+    print(f"ERROR: impossible d'écrire settings.json: {exc}", file=sys.stderr)
+    try:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+    except OSError:
+        pass
+    sys.exit(2)
 PY
 }
 
@@ -450,12 +480,14 @@ merge_jsons_and_generate_csv(){
     return 0
   fi
 
-  python3 - "$merged_all" "${MERGED_CHUNK_OUTPUTS[@]}" <<'PY'
+  python3 - "$merged_all" "$MAX_MERGE_INPUT_BYTES" "$MAX_MERGED_ITEMS" "${MERGED_CHUNK_OUTPUTS[@]}" <<'PY'
 import json
 import sys
 
 out_path = sys.argv[1]
-inputs = sys.argv[2:]
+max_input_bytes = int(sys.argv[2])
+max_items = int(sys.argv[3])
+inputs = sys.argv[4:]
 
 def extract_items(data):
     if isinstance(data, list):
@@ -469,9 +501,32 @@ def extract_items(data):
 
 merged = []
 for p in inputs:
+    if max_input_bytes > 0:
+        try:
+            size = os.path.getsize(p)
+        except OSError as exc:
+            print(f"WARN: taille illisible ({p}): {exc}", file=sys.stderr)
+            continue
+        if size > max_input_bytes:
+            print(
+                f"WARN: fichier ignoré ({p}) taille={size} > limite={max_input_bytes} octets",
+                file=sys.stderr,
+            )
+            continue
+
     try:
         with open(p, "r", encoding="utf-8") as f:
-            merged.extend(extract_items(json.load(f)))
+            chunk_items = extract_items(json.load(f))
+            if max_items > 0 and len(merged) + len(chunk_items) > max_items:
+                allowed = max_items - len(merged)
+                if allowed > 0:
+                    merged.extend(chunk_items[:allowed])
+                print(
+                    f"WARN: limite max diagnostics atteinte ({max_items}), fusion tronquée.",
+                    file=sys.stderr,
+                )
+                break
+            merged.extend(chunk_items)
     except Exception as exc:
         print(f"WARN: fichier ignoré ({p}): {exc}", file=sys.stderr)
 

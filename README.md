@@ -33,6 +33,11 @@ Le script de collecte:
 - fusionne les passes par chunk puis fusionne tous les chunks,
 - restaure la configuration `problems-as-file` à la fin (même en cas d'interruption).
 
+Options de durcissement supplémentaires:
+
+- `--max-merge-input-bytes` : limite la taille maximale autorisée pour chaque JSON de chunk lors de la fusion globale.
+- `--max-merged-items` : limite le nombre total de diagnostics fusionnés globalement (troncature contrôlée avec warning).
+
 ### Validation bloquante de structure
 
 Le lancement est **bloqué** si un des répertoires requis est absent:
@@ -56,6 +61,14 @@ Le script applique des protections pour entrées non fiables:
 - limite de taille du JSON d'entrée (100 MiB)
 - validation minimale des diagnostics (`source` et `message` doivent être des chaînes)
 - option `--max-items` pour plafonner le nombre de diagnostics traités
+- conversion sûre des positions (`line`/`column`) pour éviter les crashs sur valeurs non numériques
+
+Le script de collecte applique aussi des protections:
+
+- échec explicite si `settings.json` est invalide (au lieu d'écrasement silencieux)
+- backup automatique de `settings.json` avant modification (`settings.json.bak`)
+- écriture atomique de `settings.json` via fichier temporaire
+- limites de ressources lors de la fusion globale (`--max-merge-input-bytes`, `--max-merged-items`)
 
 ## Tests
 
