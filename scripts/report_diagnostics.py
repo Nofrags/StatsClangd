@@ -31,18 +31,21 @@ def get_file(d: Dict[str, Any]) -> Optional[str]:
 
 
 def get_pos(d: Dict[str, Any]) -> Tuple[Optional[int], Optional[int]]:
+    def to_int_or_none(value: Any) -> Optional[int]:
+        try:
+            return int(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
     line = d.get("startLineNumber")
     col = d.get("startColumn")
     if line is not None and col is not None:
-        return int(line), int(col)
+        return to_int_or_none(line), to_int_or_none(col)
     r = d.get("range", {}) if isinstance(d.get("range", {}), dict) else {}
     s = r.get("start", {}) if isinstance(r.get("start", {}), dict) else {}
     line = s.get("line")
     col = s.get("character")
-    return (
-        int(line) if line is not None else None,
-        int(col) if col is not None else None,
-    )
+    return to_int_or_none(line), to_int_or_none(col)
 
 
 def extract_items(data: Any) -> List[Dict[str, Any]]:

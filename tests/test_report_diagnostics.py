@@ -87,6 +87,32 @@ class ReportDiagnosticsTests(unittest.TestCase):
         self.assertIn("ignoré(s)", result.stderr)
         self.assertEqual(len(detailed_rows), 2)  # header + valid row
 
+    def test_malformed_position_values_do_not_crash(self):
+        payload = {
+            "diagnostics": [
+                {
+                    "source": "clangd",
+                    "message": "bad position",
+                    "file": "a.c",
+                    "startLineNumber": "abc",
+                    "startColumn": "not-an-int",
+                },
+                {
+                    "source": "clangd",
+                    "message": "bad range",
+                    "file": "b.c",
+                    "range": {"start": {"line": "x", "character": "y"}},
+                },
+            ]
+        }
+        result, _, detailed_rows = self.run_script(payload)
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(len(detailed_rows), 3)  # header + 2 rows
+        self.assertEqual(detailed_rows[1][1], "")
+        self.assertEqual(detailed_rows[1][2], "")
+        self.assertEqual(detailed_rows[2][1], "")
+        self.assertEqual(detailed_rows[2][2], "")
+
 
 if __name__ == "__main__":
     unittest.main()
