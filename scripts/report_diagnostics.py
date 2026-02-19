@@ -88,6 +88,16 @@ def main():
         "--message-contains", default="", help="Substring filter on message."
     )
     ap.add_argument(
+        "--version",
+        default="",
+        help="Version de collecte à ajouter dans les CSV.",
+    )
+    ap.add_argument(
+        "--day",
+        default="",
+        help="Jour de collecte (YYYY-MM-DD) à ajouter dans les CSV.",
+    )
+    ap.add_argument(
         "--max-items",
         type=int,
         default=0,
@@ -155,18 +165,20 @@ def main():
 
     with open(args.out_simple, "w", encoding="utf-8", newline="") as f:
         w = csv.writer(f, delimiter=";")
-        w.writerow(["file", "count"])
+        w.writerow(["day", "version", "file", "count"])
         for fp, n in per_file.most_common():
             w.writerow([sanitize_csv_cell(fp), n])
 
     with open(args.out_detailed, "w", encoding="utf-8", newline="") as f:
         w = csv.writer(f, delimiter=";")
-        w.writerow(["file", "line", "column", "code", "source", "message"])
+        w.writerow(["day", "version", "file", "line", "column", "code", "source", "message"])
         for d in filtered:
             fp = get_file(d) or ""
             line, col = get_pos(d)
             w.writerow(
                 [
+                    sanitize_csv_cell(args.day),
+                    sanitize_csv_cell(args.version),
                     sanitize_csv_cell(fp),
                     line if line is not None else "",
                     col if col is not None else "",

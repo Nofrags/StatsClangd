@@ -4,7 +4,7 @@ Collecte des diagnostics `clangd` depuis VS Code via l'extension **problems-as-f
 
 ## Contenu du dépôt
 
-- `scripts/collect_clangd_diagnostics.sh` : collecte en 2 passes par chunk (`srclib` puis `include`) et fusion des exports.
+- `scripts/collect_clangd_diagnostics.sh` : collecte en 2 passes par chunk (`srclib` puis `include`) et fusion des exports, en versionnant les sorties avec le nom de `--project-root`.
 - `scripts/report_diagnostics.py` : génération de rapports CSV (simple + détaillé) à partir d'un JSON fusionné.
 - `tests/test_report_diagnostics.py` : tests unitaires du reporting Python.
 
@@ -31,6 +31,8 @@ Le script de collecte:
 - exécute 2 passes par chunk (`srclib` puis `include`),
 - affiche une trace batch par batch avec le nombre de fichiers restants à ouvrir,
 - fusionne les passes par chunk puis fusionne tous les chunks,
+- déduit la version de collecte depuis le nom du répertoire `--project-root`,
+- écrit les exports dans `exports/<jour>/<version>/`,
 - restaure la configuration `problems-as-file` à la fin (même en cas d'interruption).
 
 Options de durcissement supplémentaires:
@@ -50,8 +52,8 @@ Le lancement est **bloqué** si un des répertoires requis est absent:
 
 `report_diagnostics.py` produit:
 
-- un CSV simple: `file;count`
-- un CSV détaillé: `file;line;column;code;source;message`
+- un CSV simple: `day;version;file;count`
+- un CSV détaillé: `day;version;file;line;column;code;source;message`
 
 ### Durcissement sécurité
 
