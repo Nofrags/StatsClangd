@@ -166,8 +166,16 @@ def main():
     with open(args.out_simple, "w", encoding="utf-8", newline="") as f:
         w = csv.writer(f, delimiter=";")
         w.writerow(["day", "version", "file", "count"])
-        for fp, n in per_file.most_common():
-            w.writerow([sanitize_csv_cell(fp), n])
+        for d in filtered:
+            fp = get_file(d) or ""
+            line, col = get_pos(d)
+            w.writerow(
+                [
+                    sanitize_csv_cell(args.day),
+                    sanitize_csv_cell(args.version),
+                    sanitize_csv_cell(fp)
+                ]
+            )
 
     with open(args.out_detailed, "w", encoding="utf-8", newline="") as f:
         w = csv.writer(f, delimiter=";")

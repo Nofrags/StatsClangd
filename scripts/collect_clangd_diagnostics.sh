@@ -481,7 +481,7 @@ merge_jsons_and_generate_csv(){
   fi
 
   python3 - "$merged_all" "$MAX_MERGE_INPUT_BYTES" "$MAX_MERGED_ITEMS" "${MERGED_CHUNK_OUTPUTS[@]}" <<'PY'
-import json
+import json, os
 import sys
 
 out_path = sys.argv[1]
