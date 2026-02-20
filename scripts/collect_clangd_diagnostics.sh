@@ -129,6 +129,7 @@ mkdir -p "$OUT_DIR"
 
 declare -a MERGED_CHUNK_OUTPUTS=()
 EXPORT_DIR_REL=""
+MERGE_EXPORT_DIR_OVERRIDE=""
 
 if [[ "$CHECK_COMPILE_DB" == "1" && "$MERGE_ONLY" != "1" ]]; then
   [[ -f "${PROJECT_ROOT}/compile_commands.json" ]] || die "compile_commands.json absent dans $PROJECT_ROOT"
@@ -454,7 +455,7 @@ collect_chunk_two_passes(){
   local inputs_csv
   inputs_csv="$(IFS=,; echo "${pass_outputs[*]}")"
 
-  python3 ${SCRIPT_DIR}/merge_diagnostics.py \
+  python3 "${SCRIPT_DIR}/merge_diagnostics.py" \
     --inputs "$inputs_csv" \
     --output "$merged_chunk_output" \
     >/dev/null
@@ -465,10 +466,17 @@ collect_chunk_two_passes(){
 
 merge_jsons_and_generate_csv(){
   local day
-  day="$(date +%F)"
-  EXPORT_DIR_REL="exports/${day}"
+  local export_dir
+  if [[ -n "$MERGE_EXPORT_DIR_OVERRIDE" ]]; then
+    export_dir="$MERGE_EXPORT_DIR_OVERRIDE"
+    day="$(basename "$export_dir")"
+    EXPORT_DIR_REL="exports/${day}"
+  else
+    day="$(date +%F)"
+    EXPORT_DIR_REL="exports/${day}"
+    export_dir="${OUT_DIR}/${EXPORT_DIR_REL}"
+  fi
 
-  local export_dir="${OUT_DIR}/${EXPORT_DIR_REL}"
   local merged_all="${export_dir}/merged-diagnostics.json"
   local reports_root="${OUT_DIR}/_reports_unused_includes"
   local report_dated_dir="${reports_root}/${day}"
@@ -557,13 +565,30 @@ load_existing_merged_chunks(){
   local input_dir="$MERGE_INPUT_DIR"
 
   if [[ -z "$input_dir" ]]; then
-    local latest_export_dir
-    latest_export_dir="$(find "$OUT_DIR/exports" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | tail -n1 || true)"
-    [[ -n "$latest_export_dir" ]] || die "Aucun dossier d'exports trouvé dans $OUT_DIR/exports (utilise --merge-input-dir)."
-    input_dir="$latest_export_dir"
+    local export_root="$OUT_DIR/exports"
+    [[ -d "$export_root" ]] || die "Aucun dossier d'exports trouvé dans $export_root (utilise --merge-input-dir)."
+
+    local -a export_dirs=()
+    mapfile -t export_dirs < <(find "$export_root" -mindepth 1 -maxdepth 1 -type d | sort)
+
+    local latest_candidate=""
+    local candidate
+    for candidate in "${export_dirs[@]}"; do
+      for rep in "${SOU_SUBDIRS_ARRAY[@]}"; do
+        local chunk_file="${candidate}/${EXPORT_BASENAME}-${rep}.json"
+        if [[ -f "$chunk_file" ]]; then
+          latest_candidate="$candidate"
+          break
+        fi
+      done
+    done
+
+    [[ -n "$latest_candidate" ]] || die "Aucun dossier d'exports utilisable trouvé dans $export_root (attendu: ${EXPORT_BASENAME}-<chunk>.json)."
+    input_dir="$latest_candidate"
   fi
 
   [[ -d "$input_dir" ]] || die "--merge-input-dir invalide: $input_dir"
+  MERGE_EXPORT_DIR_OVERRIDE="$input_dir"
 
   local found=0
   for rep in "${SOU_SUBDIRS_ARRAY[@]}"; do
