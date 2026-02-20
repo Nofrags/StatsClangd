@@ -122,6 +122,7 @@ if [[ "$MERGE_ONLY" != "1" ]]; then
 fi
 
 PROJECT_ROOT="$(cd "$PROJECT_ROOT" && pwd)"
+COLLECTION_VERSION="$(basename "$PROJECT_ROOT")"
 [[ -n "$SRC_ROOT" ]] || SRC_ROOT="sources/tpta-srv2"
 
 [[ -n "$OUT_DIR" ]] || OUT_DIR="${SCRIPT_DIR}/../clangd_diagnostics_out"
@@ -288,11 +289,12 @@ if existed_before:
 
 if existed_before:
     backup_path = settings_path + ".bak"
-    try:
-        shutil.copy2(settings_path, backup_path)
-    except OSError as exc:
-        print(f"ERROR: impossible de créer le backup {backup_path}: {exc}", file=sys.stderr)
-        sys.exit(2)
+    if not os.path.exists(backup_path):
+        try:
+            shutil.copy2(settings_path, backup_path)
+        except OSError as exc:
+            print(f"ERROR: impossible de créer le backup {backup_path}: {exc}", file=sys.stderr)
+            sys.exit(2)
 
 d["problems-as-file.output.fileName"] = file_name
 d["problems-as-file.interval.enabled"] = enabled
@@ -408,7 +410,7 @@ collect_chunk_two_passes(){
 
   local day
   day="$(date +%F)"
-  local out_exports="${OUT_DIR}/exports/${day}"
+  local out_exports="${OUT_DIR}/exports/${day}/${COLLECTION_VERSION}"
   mkdir -p "$out_exports"
 
   local export_name="${EXPORT_BASENAME}-${chunk}"           # file name in workspace root
@@ -485,7 +487,8 @@ merge_jsons_and_generate_csv(){
     fi
   else
     day="$(date +%F)"
-    EXPORT_DIR_REL="exports/${day}"
+    version="$COLLECTION_VERSION"
+    EXPORT_DIR_REL="exports/${day}/${version}"
     export_dir="${OUT_DIR}/${EXPORT_DIR_REL}"
   fi
 
@@ -583,11 +586,20 @@ load_existing_merged_chunks(){
     [[ -d "$export_root" ]] || die "Aucun dossier d'exports trouvé dans $export_root (utilise --merge-input-dir)."
 
     local -a export_dirs=()
-    mapfile -t export_dirs < <(find "$export_root" -mindepth 1 -maxdepth 1 -type d | sort)
+    mapfile -t export_dirs < <(find "$export_root" -mindepth 1 -maxdepth 2 -type d | sort)
 
     local latest_candidate=""
     local candidate
     for candidate in "${export_dirs[@]}"; do
+      local direct_day_candidate="0"
+      if [[ "$(basename "$(dirname "$candidate")")" == "exports" ]]; then
+        direct_day_candidate="1"
+      fi
+
+      if [[ "$direct_day_candidate" == "1" ]]; then
+        continue
+      fi
+
       for rep in "${SOU_SUBDIRS_ARRAY[@]}"; do
         local chunk_file="${candidate}/${EXPORT_BASENAME}-${rep}.json"
         if [[ -f "$chunk_file" ]]; then
