@@ -337,7 +337,7 @@ open_files_in_dir(){
       current_batch_size="$remaining_before"
     fi
 
-    echo "  -> Batch: ouverture de ${current_batch_size} fichier(s), restant après batch: $((remaining_before - current_batch_size))"
+    echo "  -> Batch: Fichers restants : $((remaining_before - current_batch_size))"
     local -a lot=("${files[@]:i:current_batch_size}")
     code -r "${lot[@]}" >/dev/null 2>&1 || true
     i=$((i + current_batch_size))
