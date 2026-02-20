@@ -337,7 +337,7 @@ open_files_in_dir(){
       current_batch_size="$remaining_before"
     fi
 
-    echo "  -> Batch: Fichers restants : $((remaining_before - current_batch_size))"
+    echo "  -> Batch: Restant après batch: $((remaining_before - current_batch_size))"
     local -a lot=("${files[@]:i:current_batch_size}")
     code -r "${lot[@]}" >/dev/null 2>&1 || true
     i=$((i + current_batch_size))
@@ -568,8 +568,7 @@ PY
     --out-detailed "$report_detailed" \
     --day "$day" \
     --version "$version" \
-    --source "clangd" \
-    --code "unused-includes"
+    --source "clangd"
 
   cp -f "$report_simple" "${report_latest_dir}/unused_includes_by_file.csv"
   cp -f "$report_detailed" "${report_latest_dir}/unused_includes_detailed.csv"
