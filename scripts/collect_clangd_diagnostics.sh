@@ -466,11 +466,23 @@ collect_chunk_two_passes(){
 
 merge_jsons_and_generate_csv(){
   local day
+  local version
   local export_dir
   if [[ -n "$MERGE_EXPORT_DIR_OVERRIDE" ]]; then
     export_dir="$MERGE_EXPORT_DIR_OVERRIDE"
-    day="$(basename "$export_dir")"
-    EXPORT_DIR_REL="exports/${day}"
+    version="$(basename "$PROJECT_ROOT")"
+
+    local maybe_day_dir
+    maybe_day_dir="$(dirname "$export_dir")"
+    if [[ "$(basename "$maybe_day_dir")" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+      day="$(basename "$maybe_day_dir")"
+      version="$(basename "$export_dir")"
+      EXPORT_DIR_REL="exports/${day}/${version}"
+    else
+      day="$(basename "$export_dir")"
+      version="$(basename "$PROJECT_ROOT")"
+      EXPORT_DIR_REL="exports/${day}/${version}"
+    fi
   else
     day="$(date +%F)"
     EXPORT_DIR_REL="exports/${day}"
@@ -551,6 +563,8 @@ PY
     --input "$merged_all" \
     --out-simple "$report_simple" \
     --out-detailed "$report_detailed" \
+    --day "$day" \
+    --version "$version" \
     --source "clangd" \
     --code "unused-includes"
 
