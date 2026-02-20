@@ -7,6 +7,8 @@ Collecte des diagnostics `clangd` depuis VS Code via l'extension **problems-as-f
 - `scripts/collect_clangd_diagnostics.sh` : collecte en 2 passes par chunk (`srclib` puis `include`) et fusion des exports, en versionnant les sorties avec le nom de `--project-root`.
 - `scripts/report_diagnostics.py` : génération de rapports CSV (simple + détaillé) à partir d'un JSON fusionné.
 - `tests/test_report_diagnostics.py` : tests unitaires du reporting Python.
+- `scripts/generate_report_charts_full.py` : graphiques PNG (pandas/matplotlib/seaborn).
+- `scripts/generate_report_charts_stdlib.py` : graphiques SVG + résumé Markdown (stdlib Python uniquement).
 
 ## Prérequis
 
@@ -72,10 +74,50 @@ Le script de collecte applique aussi des protections:
 - écriture atomique de `settings.json` via fichier temporaire
 - limites de ressources lors de la fusion globale (`--max-merge-input-bytes`, `--max-merged-items`)
 
+
+## Génération de graphiques (macro/micro)
+
+Les rapports CSV détaillés peuvent être transformés en graphiques via 2 scripts:
+
+### Préparation de l'environnement Python (version complète)
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+> Si vous êtes dans un environnement d'entreprise sans installation possible de dépendances, utilisez directement la version `stdlib` ci-dessous (sans venv ni install).
+
+1. **Version complète (libs externes)**: `scripts/generate_report_charts_full.py`
+   - Dépendances: `pandas`, `matplotlib`, `seaborn`
+   - Sorties: PNG (évolution, top fichiers, codes, sources)
+
+```bash
+python3 scripts/generate_report_charts_full.py \
+  --input-csv clangd_diagnostics_out/_reports_unused_includes/latest/unused_includes_detailed.csv \
+  --out-dir charts_full \
+  --top-n 20
+```
+
+2. **Version entreprise / sans dépendance externe**: `scripts/generate_report_charts_stdlib.py`
+   - Dépendances: uniquement la bibliothèque standard Python
+   - Sorties: SVG + `summary.md`
+
+```bash
+python3 scripts/generate_report_charts_stdlib.py \
+  --input-csv clangd_diagnostics_out/_reports_unused_includes/latest/unused_includes_detailed.csv \
+  --out-dir charts_stdlib \
+  --top-n 20
+```
+
 ## Tests
 
 ```bash
 python3 -m py_compile scripts/report_diagnostics.py
+python3 -m py_compile scripts/generate_report_charts_full.py
+python3 -m py_compile scripts/generate_report_charts_stdlib.py
 bash -n scripts/collect_clangd_diagnostics.sh
 python3 -m unittest -v tests/test_report_diagnostics.py
 ```
