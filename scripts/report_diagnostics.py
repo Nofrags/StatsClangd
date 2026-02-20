@@ -31,18 +31,21 @@ def get_file(d: Dict[str, Any]) -> Optional[str]:
 
 
 def get_pos(d: Dict[str, Any]) -> Tuple[Optional[int], Optional[int]]:
+    def to_int_or_none(value: Any) -> Optional[int]:
+        try:
+            return int(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
     line = d.get("startLineNumber")
     col = d.get("startColumn")
     if line is not None and col is not None:
-        return int(line), int(col)
+        return to_int_or_none(line), to_int_or_none(col)
     r = d.get("range", {}) if isinstance(d.get("range", {}), dict) else {}
     s = r.get("start", {}) if isinstance(r.get("start", {}), dict) else {}
     line = s.get("line")
     col = s.get("character")
-    return (
-        int(line) if line is not None else None,
-        int(col) if col is not None else None,
-    )
+    return to_int_or_none(line), to_int_or_none(col)
 
 
 def extract_items(data: Any) -> List[Dict[str, Any]]:
@@ -83,6 +86,16 @@ def main():
     )
     ap.add_argument(
         "--message-contains", default="", help="Substring filter on message."
+    )
+    ap.add_argument(
+        "--version",
+        default="",
+        help="Version de collecte à ajouter dans les CSV.",
+    )
+    ap.add_argument(
+        "--day",
+        default="",
+        help="Jour de collecte (YYYY-MM-DD) à ajouter dans les CSV.",
     )
     ap.add_argument(
         "--max-items",
@@ -152,18 +165,28 @@ def main():
 
     with open(args.out_simple, "w", encoding="utf-8", newline="") as f:
         w = csv.writer(f, delimiter=";")
-        w.writerow(["file", "count"])
-        for fp, n in per_file.most_common():
-            w.writerow([sanitize_csv_cell(fp), n])
-
-    with open(args.out_detailed, "w", encoding="utf-8", newline="") as f:
-        w = csv.writer(f, delimiter=";")
-        w.writerow(["file", "line", "column", "code", "source", "message"])
+        w.writerow(["day", "version", "file", "count"])
         for d in filtered:
             fp = get_file(d) or ""
             line, col = get_pos(d)
             w.writerow(
                 [
+                    sanitize_csv_cell(args.day),
+                    sanitize_csv_cell(args.version),
+                    sanitize_csv_cell(fp)
+                ]
+            )
+
+    with open(args.out_detailed, "w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f, delimiter=";")
+        w.writerow(["day", "version", "file", "line", "column", "code", "source", "message"])
+        for d in filtered:
+            fp = get_file(d) or ""
+            line, col = get_pos(d)
+            w.writerow(
+                [
+                    sanitize_csv_cell(args.day),
+                    sanitize_csv_cell(args.version),
                     sanitize_csv_cell(fp),
                     line if line is not None else "",
                     col if col is not None else "",

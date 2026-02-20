@@ -13,6 +13,14 @@ set -euo pipefail
 #  - Le script ne peut pas piloter parfaitement l'UI VS Code en remote.
 #    Il te demande donc de fermer les éditeurs manuellement entre les passes.
 
+SOURCE_SCRIPT="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE_SCRIPT" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE_SCRIPT")" && pwd)"
+  SOURCE_SCRIPT="$(readlink "$SOURCE_SCRIPT")"
+  [[ $SOURCE_SCRIPT != /* ]] && SOURCE_SCRIPT="$DIR/$SOURCE_SCRIPT"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE_SCRIPT")" && pwd)"
+
 die(){ echo "ERROR: $*" >&2; exit 1; }
 need(){ command -v "$1" >/dev/null 2>&1 || die "Commande manquante: $1"; }
 
@@ -22,28 +30,34 @@ Usage:
   scripts/collect_clangd_diagnostics.sh [options]
 
 Options:
-  --project-root PATH     Racine du workspace VS Code (contient compile_commands.json) [default: pwd]
-  --src-root PATH         Racine des sources contenant sou/<chunk>                    [default: <project-root>/sources]
-  --sou-subdirs LIST      Liste des chunks (séparés par virgule)                      [default: base,aggreg,webservices]
-  --rel-srclib PATH       Relatif au chunk, ex: srclib                                [default: srclib]
-  --rel-include PATH      Relatif au chunk, ex: include                               [default: include]
-  --settings-json PATH    Fichier settings.json remote VS Code                        [default: ~/.vscode-server/data/Machine/settings.json]
-  --export-basename NAME  Nom base export côté workspace (sans .json)                 [default: project-problems]
-  --out-dir PATH          Répertoire de sortie                                        [default: <project-root>/clangd_diagnostics_out]
-  --batch-size N          Taille des lots d'ouverture                                 [default: 40]
-  --batch-sleep SEC       Pause entre lots                                            [default: 0.6]
-  --poll-seconds SEC      Période de vérif taille fichier export                      [default: auto depuis settings ou 5]
-  --max-cycles N          Cycles max d'attente stabilisation                          [default: 24]
-  --stable-needed N       Nombre de tailles identiques consécutives                   [default: 3]
-  --no-compile-db-check   Ne pas vérifier compile_commands.json                       [default: 0]
+  -r, --project-root PATH     Racine du workspace VS Code (contient compile_commands.json)      [default: pwd]
+  --src-root PATH         Racine des sources contenant sou/<chunk>                          [default: <project-root>/sources]
+  --sou-subdirs LIST      Liste des chunks (séparés par virgule)                            [default: base,aggreg,webservices]
+  --rel-srclib PATH       Relatif au chunk, ex: srclib                                      [default: srclib]
+  --rel-include PATH      Relatif au chunk, ex: include                                     [default: include]
+  --settings-json PATH    Fichier settings.json remote VS Code                              [default: ~/.vscode-server/data/Machine/settings.json]
+  --export-basename NAME  Nom base export côté workspace (sans .json)                       [default: project-problems]
+  --out-dir PATH          Répertoire de sortie                                              [default: $SCRIPT_DIR/clangd_diagnostics_out]
+  --batch-size N          Taille des lots d'ouverture                                       [default: 40]
+  --batch-sleep SEC       Pause entre lots                                                  [default: 0.6]
+  --poll-seconds SEC      Période de vérif taille fichier export                            [default: auto depuis settings ou 5]
+  --max-cycles N          Cycles max d'attente stabilisation                                [default: 24]
+  --stable-needed N       Nombre de tailles identiques consécutives                         [default: 3]
+  --max-merge-input-bytes N  Taille max autorisée par fichier JSON de chunk (0 = no limit)  [default: 104857600]
+  --max-merged-items N    Nombre max de diagnostics fusionnés globalement (0 = no limit)    [default: 500000]
+  --merge-only            Ne faire que la fusion globale + génération CSV (pas de collecte)
+  --merge-input-dir PATH  Dossier des JSON chunk déjà fusionnés (mode --merge-only)         [default: dernier dossier trouvé dans <out-dir>/exports]
+  --no-compile-db-check   Ne pas vérifier compile_commands.json                             [default: 0]
   -h, --help              Aide
 
 Exemples:
-  scripts/collect_clangd_diagnostics.sh --project-root /path/to/project
+  scripts/collect_clangd_diagnostics.sh --project-root $ET_ROOT
+
+  scripts/collect_clangd_diagnostics.sh --merge-only
 
   scripts/collect_clangd_diagnostics.sh \
     --project-root . \
-    --src-root ./sources/tpta-srv2 \
+    --src-root ./sources/projet1 \
     --sou-subdirs base,aggreg,webservices \
     --out-dir ./_diag_out
 USAGE
@@ -52,7 +66,6 @@ USAGE
 # Defaults
 PROJECT_ROOT="$(pwd)"
 SRC_ROOT=""                 # computed later
-#SOU_SUBDIRS=("base" "aggreg" "webservices")
 SOU_SUBDIRS="${SOU_SUBDIRS:-base,aggreg,webservices}"
 REL_SRCLIB="srclib"
 REL_INCLUDE="include"
@@ -66,11 +79,15 @@ POLL_SECONDS=""             # computed later
 MAX_CYCLES="24"
 STABLE_NEEDED="3"
 CHECK_COMPILE_DB="1"
+MERGE_ONLY="0"
+MERGE_INPUT_DIR=""
+MAX_MERGE_INPUT_BYTES="104857600"
+MAX_MERGED_ITEMS="500000"
 
 # Parse args
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --project-root) PROJECT_ROOT="$2"; shift 2;;
+    -r|--project-root) PROJECT_ROOT="$2"; shift 2;;
     --src-root) SRC_ROOT="$2"; shift 2;;
     --sou-subdirs) SOU_SUBDIRS="$2"; shift 2;;
     --rel-srclib) REL_SRCLIB="$2"; shift 2;;
@@ -83,9 +100,13 @@ while [[ $# -gt 0 ]]; do
     --poll-seconds) POLL_SECONDS="$2"; shift 2;;
     --max-cycles) MAX_CYCLES="$2"; shift 2;;
     --stable-needed) STABLE_NEEDED="$2"; shift 2;;
+    --merge-only) MERGE_ONLY="1"; shift 1;;
+    --merge-input-dir) MERGE_INPUT_DIR="$2"; shift 2;;
     --no-compile-db-check) CHECK_COMPILE_DB="0"; shift 1;;
+    --max-merge-input-bytes) MAX_MERGE_INPUT_BYTES="$2"; shift 2;;
+    --max-merged-items) MAX_MERGED_ITEMS="$2"; shift 2;;
     -h|--help) usage; exit 0;;
-    *) die "Option inconnue: $1";;
+    *) usage; echo ; die "Option inconnue: $1";;
   esac
 done
 
@@ -96,15 +117,22 @@ need find
 need mkdir
 need cp
 need date
-need code || echo "WARN: 'code' CLI non trouvé. Exécute depuis un terminal intégré VS Code (Remote)."
+if [[ "$MERGE_ONLY" != "1" ]]; then
+  need code || echo "WARN: 'code' CLI non trouvé. Exécute depuis un terminal intégré VS Code (Remote)."
+fi
 
 PROJECT_ROOT="$(cd "$PROJECT_ROOT" && pwd)"
+COLLECTION_VERSION="$(basename "$PROJECT_ROOT")"
 [[ -n "$SRC_ROOT" ]] || SRC_ROOT="sources/tpta-srv2"
 
-[[ -n "$OUT_DIR" ]] || OUT_DIR="${PROJECT_ROOT}/clangd_diagnostics_out"
+[[ -n "$OUT_DIR" ]] || OUT_DIR="${SCRIPT_DIR}/../clangd_diagnostics_out"
 mkdir -p "$OUT_DIR"
 
-if [[ "$CHECK_COMPILE_DB" == "1" ]]; then
+declare -a MERGED_CHUNK_OUTPUTS=()
+EXPORT_DIR_REL=""
+MERGE_EXPORT_DIR_OVERRIDE=""
+
+if [[ "$CHECK_COMPILE_DB" == "1" && "$MERGE_ONLY" != "1" ]]; then
   [[ -f "${PROJECT_ROOT}/compile_commands.json" ]] || die "compile_commands.json absent dans $PROJECT_ROOT"
 fi
 
@@ -207,10 +235,17 @@ print_chunks_summary(){
     [[ -d "$srclib" ]] && st_srclib="OK" || isAllDirIsPresent=0
     [[ -d "$include" ]] && st_inc="OK" || isAllDirIsPresent=0
 
-    printf " - %-12s rep:%-7s  srclib:%-7s  include:%-7s\n" "$rep" "$st_base" "$st_srclib" "$st_inc"
+    printf " - %-25s rep:%-7s  srclib:%-7s  include:%-7s\n" "$rep" "$st_base" "$st_srclib" "$st_inc"
   done
 
-  [[ $isAllDirIsPresent -eq 0 ]] && die "Au moins un répertoire n'est pas présent."
+  if [[ -f "${SCRIPT_DIR}/merge_diagnostics.py" ]]; then
+    printf " - %-25s script:OK\n" "merge_diagnostics.py"
+  else
+    echo 'Fichier de merge merge_diagnostics.py indisponible dans ${SCRIPT_DIR}.'
+    isAllDirIsPresent=0
+  fi 
+
+  [[ $isAllDirIsPresent -eq 0 ]] && die "Au moins nécéssaire n'est pas présent."
 
   echo "=============================================================="
   echo
@@ -233,23 +268,50 @@ set_problems_as_file(){
   local enabled="$2"     # True/False
 
   python3 - "$SETTINGS_JSON" "$file_name" "$enabled" <<'PY'
-import json, os, sys
+import json, os, shutil, sys
 settings_path = sys.argv[1]
 file_name     = sys.argv[2]
 enabled       = sys.argv[3].strip().lower() in ("1","true","yes","on")
 
 os.makedirs(os.path.dirname(settings_path), exist_ok=True)
-try:
-    with open(settings_path, "r", encoding="utf-8") as f:
-        d = json.load(f)
-except Exception:
-    d = {}
+d = {}
+existed_before = os.path.exists(settings_path)
+if existed_before:
+    try:
+        with open(settings_path, "r", encoding="utf-8") as f:
+            d = json.load(f)
+    except json.JSONDecodeError as exc:
+        print(f"ERROR: settings.json invalide, arrêt pour éviter un écrasement: {exc}", file=sys.stderr)
+        sys.exit(2)
+    except OSError as exc:
+        print(f"ERROR: impossible de lire settings.json: {exc}", file=sys.stderr)
+        sys.exit(2)
+
+if existed_before:
+    backup_path = settings_path + ".bak"
+    if not os.path.exists(backup_path):
+        try:
+            shutil.copy2(settings_path, backup_path)
+        except OSError as exc:
+            print(f"ERROR: impossible de créer le backup {backup_path}: {exc}", file=sys.stderr)
+            sys.exit(2)
 
 d["problems-as-file.output.fileName"] = file_name
 d["problems-as-file.interval.enabled"] = enabled
 
-with open(settings_path, "w", encoding="utf-8") as f:
-    json.dump(d, f, ensure_ascii=False, indent=2)
+tmp_path = settings_path + ".tmp"
+try:
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(d, f, ensure_ascii=False, indent=2)
+    os.replace(tmp_path, settings_path)
+except OSError as exc:
+    print(f"ERROR: impossible d'écrire settings.json: {exc}", file=sys.stderr)
+    try:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+    except OSError:
+        pass
+    sys.exit(2)
 PY
 }
 
@@ -266,11 +328,19 @@ open_files_in_dir(){
 
   echo "Ouverture de ${#files[@]} fichiers dans $dir (batch_size=$batch_size, sleep=${batch_sleep}s)"
 
+  local total="${#files[@]}"
   local i=0
-  while [[ $i -lt ${#files[@]} ]]; do
-    local -a lot=("${files[@]:i:batch_size}")
+  while [[ $i -lt $total ]]; do
+    local remaining_before=$((total - i))
+    local current_batch_size="$batch_size"
+    if (( remaining_before < current_batch_size )); then
+      current_batch_size="$remaining_before"
+    fi
+
+    echo "  -> Batch: Restant après batch: $((remaining_before - current_batch_size))"
+    local -a lot=("${files[@]:i:current_batch_size}")
     code -r "${lot[@]}" >/dev/null 2>&1 || true
-    i=$((i + batch_size))
+    i=$((i + current_batch_size))
     sleep "$batch_sleep"
   done
 }
@@ -315,20 +385,20 @@ prompt_close_editors(){
   echo "=============================================================="
   echo "ACTION MANUELLE: Fermer les éditeurs ouverts dans VS Code"
   echo "  Ctrl + Shift + P"
-  echo "  Commande : View: Close Editor (répéter si nécessaire)"
-  echo "Puis appuyez sur une touche ici pour continuer..."
+  echo "  Commande : View: Close All Editors"
   echo "=============================================================="
+  echo
   read -n 1 -s -r -p "Appuyez sur une touche pour continuer..."
   echo
 }
 
-copy_export(){
+move_export(){
   local src_file="$1"   # workspace root file
   local dst_file="$2"   # safe output
   mkdir -p "$(dirname "$dst_file")"
   [[ -f "$src_file" ]] || { echo "WARN: export introuvable: $src_file"; return 1; }
-  cp -f "$src_file" "$dst_file"
-  echo "Copié -> $dst_file"
+  mv -f "$src_file" "$dst_file"
+  echo "Déplacé $src_file -> $dst_file"
 }
 
 collect_chunk_two_passes(){
@@ -340,7 +410,7 @@ collect_chunk_two_passes(){
 
   local day
   day="$(date +%F)"
-  local out_exports="${OUT_DIR}/exports/${day}"
+  local out_exports="${OUT_DIR}/exports/${day}/${COLLECTION_VERSION}"
   mkdir -p "$out_exports"
 
   local export_name="${EXPORT_BASENAME}-${chunk}"           # file name in workspace root
@@ -361,15 +431,14 @@ collect_chunk_two_passes(){
     set_problems_as_file "$export_name" "True"
     rm -f "$export_file"
 
-    if [[ -d "$target_dir" ]]; then
-      open_files_in_dir "$target_dir" "$BATCH_SIZE" "$BATCH_SLEEP"
-    else
-      echo "WARN: répertoire absent: $target_dir"
-    fi
+    [[ -d "$target_dir" ]] || die "répertoire obligatoire absent pendant la collecte: $target_dir"
+    open_files_in_dir "$target_dir" "$BATCH_SIZE" "$BATCH_SLEEP"
 
     wait_file_stable "$export_file" "$poll" "$MAX_CYCLES" "$STABLE_NEEDED"
 
-    if copy_export "$export_file" "$dst"; then
+    set_problems_as_file "$export_name" "false"
+
+    if move_export "$export_file" "$dst"; then
       pass_outputs+=("$dst")
     fi
 
@@ -379,6 +448,7 @@ collect_chunk_two_passes(){
   run_chunk_pass 1 "${pass_dirs[0]}"
   run_chunk_pass 2 "${pass_dirs[1]}"
 
+
   if [[ ${#pass_outputs[@]} -eq 0 ]]; then
     echo "WARN: aucun export valide pour chunk=$chunk (fusion ignorée)"
     return 0
@@ -387,31 +457,211 @@ collect_chunk_two_passes(){
   local inputs_csv
   inputs_csv="$(IFS=,; echo "${pass_outputs[*]}")"
 
-  python3 scripts/merge_diagnostics.py \
+  python3 "${SCRIPT_DIR}/merge_diagnostics.py" \
     --inputs "$inputs_csv" \
     --output "$merged_chunk_output" \
     >/dev/null
 
   echo "OK: chunk fusionné -> $merged_chunk_output"
+  MERGED_CHUNK_OUTPUTS+=("$merged_chunk_output")
+}
+
+merge_jsons_and_generate_csv(){
+  local day
+  local version
+  local export_dir
+  if [[ -n "$MERGE_EXPORT_DIR_OVERRIDE" ]]; then
+    export_dir="$MERGE_EXPORT_DIR_OVERRIDE"
+    version="$(basename "$PROJECT_ROOT")"
+
+    local maybe_day_dir
+    maybe_day_dir="$(dirname "$export_dir")"
+    if [[ "$(basename "$maybe_day_dir")" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+      day="$(basename "$maybe_day_dir")"
+      version="$(basename "$export_dir")"
+      EXPORT_DIR_REL="exports/${day}/${version}"
+    else
+      day="$(basename "$export_dir")"
+      version="$(basename "$PROJECT_ROOT")"
+      EXPORT_DIR_REL="exports/${day}/${version}"
+    fi
+  else
+    day="$(date +%F)"
+    version="$COLLECTION_VERSION"
+    EXPORT_DIR_REL="exports/${day}/${version}"
+    export_dir="${OUT_DIR}/${EXPORT_DIR_REL}"
+  fi
+
+  local merged_all="${export_dir}/merged-diagnostics.json"
+  local reports_root="${OUT_DIR}/_reports_unused_includes"
+  local report_dated_dir="${reports_root}/${day}"
+  local report_latest_dir="${reports_root}/latest"
+  mkdir -p "$export_dir" "$report_dated_dir" "$report_latest_dir"
+
+  if [[ ${#MERGED_CHUNK_OUTPUTS[@]} -eq 0 ]]; then
+    echo "WARN: aucun JSON chunk à fusionner."
+    return 0
+  fi
+
+  python3 - "$merged_all" "$MAX_MERGE_INPUT_BYTES" "$MAX_MERGED_ITEMS" "${MERGED_CHUNK_OUTPUTS[@]}" <<'PY'
+import json, os
+import sys
+
+out_path = sys.argv[1]
+max_input_bytes = int(sys.argv[2])
+max_items = int(sys.argv[3])
+inputs = sys.argv[4:]
+
+def extract_items(data):
+    if isinstance(data, list):
+        return [x for x in data if isinstance(x, dict)]
+    if isinstance(data, dict):
+        for k in ("problems", "diagnostics", "items", "data"):
+            v = data.get(k)
+            if isinstance(v, list):
+                return [x for x in v if isinstance(x, dict)]
+    return []
+
+merged = []
+for p in inputs:
+    if max_input_bytes > 0:
+        try:
+            size = os.path.getsize(p)
+        except OSError as exc:
+            print(f"WARN: taille illisible ({p}): {exc}", file=sys.stderr)
+            continue
+        if size > max_input_bytes:
+            print(
+                f"WARN: fichier ignoré ({p}) taille={size} > limite={max_input_bytes} octets",
+                file=sys.stderr,
+            )
+            continue
+
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            chunk_items = extract_items(json.load(f))
+            if max_items > 0 and len(merged) + len(chunk_items) > max_items:
+                allowed = max_items - len(merged)
+                if allowed > 0:
+                    merged.extend(chunk_items[:allowed])
+                print(
+                    f"WARN: limite max diagnostics atteinte ({max_items}), fusion tronquée.",
+                    file=sys.stderr,
+                )
+                break
+            merged.extend(chunk_items)
+    except Exception as exc:
+        print(f"WARN: fichier ignoré ({p}): {exc}", file=sys.stderr)
+
+with open(out_path, "w", encoding="utf-8") as f:
+    json.dump(merged, f, ensure_ascii=False, indent=2)
+
+print(f"OK: JSON global fusionné -> {out_path}")
+PY
+
+  local report_simple="${report_dated_dir}/unused_includes_by_file.csv"
+  local report_detailed="${report_dated_dir}/unused_includes_detailed.csv"
+
+  python3 "${SCRIPT_DIR}/report_diagnostics.py" \
+    --input "$merged_all" \
+    --out-simple "$report_simple" \
+    --out-detailed "$report_detailed" \
+    --day "$day" \
+    --version "$version" \
+    --source "clangd"
+
+  cp -f "$report_simple" "${report_latest_dir}/unused_includes_by_file.csv"
+  cp -f "$report_detailed" "${report_latest_dir}/unused_includes_detailed.csv"
+  cp -f "$merged_all" "${report_latest_dir}/merged-diagnostics.json"
+
+  echo "OK: rapports CSV générés dans ${report_dated_dir} (copie dans latest/)"
+}
+
+load_existing_merged_chunks(){
+  local input_dir="$MERGE_INPUT_DIR"
+
+  if [[ -z "$input_dir" ]]; then
+    local export_root="$OUT_DIR/exports"
+    [[ -d "$export_root" ]] || die "Aucun dossier d'exports trouvé dans $export_root (utilise --merge-input-dir)."
+
+    local -a export_dirs=()
+    mapfile -t export_dirs < <(find "$export_root" -mindepth 1 -maxdepth 2 -type d | sort)
+
+    local latest_candidate=""
+    local candidate
+    for candidate in "${export_dirs[@]}"; do
+      local direct_day_candidate="0"
+      if [[ "$(basename "$(dirname "$candidate")")" == "exports" ]]; then
+        direct_day_candidate="1"
+      fi
+
+      if [[ "$direct_day_candidate" == "1" ]]; then
+        continue
+      fi
+
+      for rep in "${SOU_SUBDIRS_ARRAY[@]}"; do
+        local chunk_file="${candidate}/${EXPORT_BASENAME}-${rep}.json"
+        if [[ -f "$chunk_file" ]]; then
+          latest_candidate="$candidate"
+          break
+        fi
+      done
+    done
+
+    [[ -n "$latest_candidate" ]] || die "Aucun dossier d'exports utilisable trouvé dans $export_root (attendu: ${EXPORT_BASENAME}-<chunk>.json)."
+    input_dir="$latest_candidate"
+  fi
+
+  [[ -d "$input_dir" ]] || die "--merge-input-dir invalide: $input_dir"
+  MERGE_EXPORT_DIR_OVERRIDE="$input_dir"
+
+  local found=0
+  for rep in "${SOU_SUBDIRS_ARRAY[@]}"; do
+    local chunk_file="${input_dir}/${EXPORT_BASENAME}-${rep}.json"
+    if [[ -f "$chunk_file" ]]; then
+      MERGED_CHUNK_OUTPUTS+=("$chunk_file")
+      found=1
+    else
+      echo "WARN: chunk absent pour fusion: $chunk_file"
+    fi
+  done
+
+  [[ "$found" == "1" ]] || die "Aucun JSON chunk utilisable dans $input_dir"
+  echo "Mode --merge-only: ${#MERGED_CHUNK_OUTPUTS[@]} chunk(s) détecté(s) dans $input_dir"
 }
 
 main(){
-  print_requirements_if_missing
+  if [[ "$MERGE_ONLY" != "1" ]]; then
+    print_requirements_if_missing
+  fi
 
-  cleanup_problems_as_file(){
-    set_problems_as_file "${EXPORT_BASENAME}.json" "False" >/dev/null || true
-  }
-  trap cleanup_problems_as_file EXIT INT TERM
+  if [[ "$MERGE_ONLY" != "1" ]]; then
+    cleanup_problems_as_file(){
+      set_problems_as_file "${EXPORT_BASENAME}.json" "False" >/dev/null || true
+    }
+    trap cleanup_problems_as_file EXIT INT TERM
+  fi
 
-  if [[ -z "$SRC_ROOT" || ! -d "$PROJECT_ROOT/$SRC_ROOT" ]]; then
+  if [[ "$MERGE_ONLY" != "1" && ( -z "$SRC_ROOT" || ! -d "$PROJECT_ROOT/$SRC_ROOT" ) ]]; then
     die "--src-root invalide. Donne le bon chemin (actuel: $PROJECT_ROOT/$SRC_ROOT)."
+  fi
+
+  # Conversion CSV -> tableau Bash
+  IFS=',' read -r -a SOU_SUBDIRS_ARRAY <<< "$SOU_SUBDIRS"
+
+  if [[ "$MERGE_ONLY" == "1" ]]; then
+    load_existing_merged_chunks
+    echo "Fusion globale des chunks (mode --merge-only)..."
+    merge_jsons_and_generate_csv
+    echo
+    echo "Résultats disponibles dans :"
+    echo "  - $OUT_DIR/_reports_unused_includes/latest/"
+    echo "  - $OUT_DIR/$EXPORT_DIR_REL/"
+    return 0
   fi
 
   local poll="$POLL_SECONDS"
   [[ -n "$poll" ]] || poll="$(get_poll_seconds)"
-
-  # Conversion CSV -> tableau Bash
-  IFS=',' read -r -a SOU_SUBDIRS_ARRAY <<< "$SOU_SUBDIRS"
 
   # --- Résumé configuration ---
   print_chunks_summary
@@ -422,10 +672,14 @@ main(){
   echo "  NB_STABLE     = $STABLE_NEEDED"
   echo "  BATCH_SIZE    = $BATCH_SIZE"
   echo "  BATCH_SLEEP   = $BATCH_SLEEP"
-  echo
-  echo "Appuyez sur ENTREE pour continuer..."
   echo "=============================================================="
-  read -r
+  echo
+  read -n 1 -s -r -p "Appuyez sur une touche pour continuer... (q pour quitter)" caractere
+  echo
+
+  if [[ "$caractere" = "q" ]]; then
+    exit 0
+  fi
 
   # --- Collecte ---
   for rep in "${SOU_SUBDIRS_ARRAY[@]}"; do
@@ -433,13 +687,9 @@ main(){
     echo "=== Chunk: $rep"
     echo "=============================================================="
 
-    collect_chunk_two_passes "$rep" $BATCH_SIZE $BATCH_SLEEP
+    collect_chunk_two_passes "$rep" "$poll"
     echo
   done
-
-  # --- Reset config problems-as-file ---
-  echo "Remise à l'état par défaut de problems-as-file..."
-  update_problems_as_file_settings "default" False >/dev/null || true
 
   # --- Fusion globale ---
   echo
@@ -450,6 +700,7 @@ main(){
   echo "=============================================================="
   echo " COLLECTE TERMINEE"
   echo "=============================================================="
+  echo
   echo "Résultats disponibles dans :"
   echo "  - $OUT_DIR/_reports_unused_includes/latest/"
   echo "  - $OUT_DIR/$EXPORT_DIR_REL/"

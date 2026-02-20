@@ -57,10 +57,25 @@ class ReportDiagnosticsTests(unittest.TestCase):
         result, simple_rows, detailed_rows = self.run_script(payload)
         self.assertEqual(result.returncode, 0, msg=result.stderr)
 
-        self.assertEqual(simple_rows[1][0], "'@danger.c")
-        self.assertEqual(detailed_rows[1][0], "'@danger.c")
-        self.assertEqual(detailed_rows[1][3], "'+SUM(A1)")
-        self.assertEqual(detailed_rows[1][5], "'=2+2")
+        self.assertEqual(simple_rows[1][2], "'@danger.c")
+        self.assertEqual(detailed_rows[1][2], "'@danger.c")
+        self.assertEqual(detailed_rows[1][5], "'+SUM(A1)")
+        self.assertEqual(detailed_rows[1][7], "'=2+2")
+
+    def test_day_and_version_are_present(self):
+        payload = {
+            "diagnostics": [
+                {"source": "clangd", "message": "ok", "file": "a.c", "code": "unused-includes"}
+            ]
+        }
+        result, simple_rows, detailed_rows = self.run_script(
+            payload, ["--day", "2026-01-01", "--version", "release-42"]
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(simple_rows[0][:2], ["day", "version"])
+        self.assertEqual(simple_rows[1][0:2], ["2026-01-01", "release-42"])
+        self.assertEqual(detailed_rows[0][:2], ["day", "version"])
+        self.assertEqual(detailed_rows[1][0:2], ["2026-01-01", "release-42"])
 
     def test_max_items_limits_output(self):
         payload = {
@@ -86,6 +101,36 @@ class ReportDiagnosticsTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertIn("ignoré(s)", result.stderr)
         self.assertEqual(len(detailed_rows), 2)  # header + valid row
+
+    def test_malformed_position_values_do_not_crash(self):
+        payload = {
+            "diagnostics": [
+                {
+                    "source": "clangd",
+                    "message": "bad position",
+                    "file": "a.c",
+                    "startLineNumber": "abc",
+                    "startColumn": "not-an-int",
+                },
+                {
+                    "source": "clangd",
+                    "message": "bad range",
+                    "file": "b.c",
+                    "range": {"start": {"line": "x", "character": "y"}},
+                },
+            ]
+        }
+        result, _, detailed_rows = self.run_script(payload)
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(len(detailed_rows), 3)  # header + 2 rows
+        self.assertEqual(detailed_rows[1][1], "")
+        self.assertEqual(detailed_rows[1][2], "")
+        self.assertEqual(detailed_rows[1][3], "")
+        self.assertEqual(detailed_rows[1][4], "")
+        self.assertEqual(detailed_rows[2][1], "")
+        self.assertEqual(detailed_rows[2][2], "")
+        self.assertEqual(detailed_rows[2][3], "")
+        self.assertEqual(detailed_rows[2][4], "")
 
 
 if __name__ == "__main__":
