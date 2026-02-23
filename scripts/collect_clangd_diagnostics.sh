@@ -81,6 +81,7 @@ STABLE_NEEDED="3"
 CHECK_COMPILE_DB="1"
 MERGE_ONLY="0"
 MERGE_INPUT_DIR=""
+MERGE_VERSION=""
 MAX_MERGE_INPUT_BYTES="104857600"
 MAX_MERGED_ITEMS="500000"
 
@@ -102,6 +103,7 @@ while [[ $# -gt 0 ]]; do
     --stable-needed) STABLE_NEEDED="$2"; shift 2;;
     --merge-only) MERGE_ONLY="1"; shift 1;;
     --merge-input-dir) MERGE_INPUT_DIR="$2"; shift 2;;
+    --merge-version) MERGE_VERSION="$2"; shift 2;;
     --no-compile-db-check) CHECK_COMPILE_DB="0"; shift 1;;
     --max-merge-input-bytes) MAX_MERGE_INPUT_BYTES="$2"; shift 2;;
     --max-merged-items) MAX_MERGED_ITEMS="$2"; shift 2;;
@@ -119,6 +121,9 @@ need cp
 need date
 if [[ "$MERGE_ONLY" != "1" ]]; then
   need code || echo "WARN: 'code' CLI non trouvé. Exécute depuis un terminal intégré VS Code (Remote)."
+elif [[ "$MERGE_VERSION" == "" ]]; then
+  echo "WARN : Il faut spécifier la version de merge (--merge-version) pour indiquer la version lors du merge."
+  exit 1
 fi
 
 PROJECT_ROOT="$(cd "$PROJECT_ROOT" && pwd)"
@@ -487,7 +492,7 @@ merge_jsons_and_generate_csv(){
     fi
   else
     day="$(date +%F)"
-    version="$COLLECTION_VERSION"
+    version="$MERGE_VERSION"
     EXPORT_DIR_REL="exports/${day}/${version}"
     export_dir="${OUT_DIR}/${EXPORT_DIR_REL}"
   fi
