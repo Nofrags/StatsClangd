@@ -57,3 +57,4 @@ dkms.conf
 # Exports
 clangd_diagnostics_out/
 charts/
+**.bak
