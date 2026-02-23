@@ -118,7 +118,11 @@ def main() -> None:
         .sort_values("count", ascending=False)
     )
     plt.figure(figsize=(8, 8))
-    plt.pie(by_source["count"], labels=by_source["source"], autopct="%1.1f%%", startangle=90)
+    if by_source.empty:
+        plt.text(0.5, 0.5, "Aucun diagnostic", ha="center", va="center")
+        plt.axis("off")
+    else:
+        plt.pie(by_source["count"], labels=by_source["source"], autopct="%1.1f%%", startangle=90)
     plt.title("Répartition par source")
     plt.tight_layout()
     plt.savefig(os.path.join(args.out_dir, "04_sources_pie.png"), dpi=150)

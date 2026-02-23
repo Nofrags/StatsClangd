@@ -499,7 +499,7 @@ merge_jsons_and_generate_csv(){
 
   local merged_all="${export_dir}/merged-diagnostics.json"
   local reports_root="${OUT_DIR}/_reports_unused_includes"
-  local report_dated_dir="${reports_root}/${day}"
+  local report_dated_dir="${reports_root}/${day}/${version}"
   local report_latest_dir="${reports_root}/latest"
   mkdir -p "$export_dir" "$report_dated_dir" "$report_latest_dir"
 
