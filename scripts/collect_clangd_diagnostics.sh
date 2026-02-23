@@ -73,7 +73,7 @@ SETTINGS_JSON="${HOME}/.vscode-server/data/Machine/settings.json"
 EXPORT_BASENAME="project-problems"   # on ajoute -<chunk> etc.
 OUT_DIR=""                  # computed later
 BATCH_SIZE="1"
-BATCH_SLEEP="0.5"
+BATCH_SLEEP="0.4"
 POLL_SECONDS_DEFAULT="5"
 POLL_SECONDS=""             # computed later
 MAX_CYCLES="24"
@@ -84,6 +84,9 @@ MERGE_INPUT_DIR=""
 MERGE_VERSION=""
 MAX_MERGE_INPUT_BYTES="104857600"
 MAX_MERGED_ITEMS="500000"
+
+# largeur de la barre
+progress_width=40
 
 # Parse args
 while [[ $# -gt 0 ]]; do
@@ -183,6 +186,25 @@ check_prereqs(){
   fi
 
   return "$missing"
+}
+
+progress_bar() {
+  local done="$1" total="$2" extra="$3"
+
+  # évite division par 0
+  (( total == 0 )) && total=1
+
+  local pct=$(( done * 100 / total ))
+  local filled=$(( pct * progress_width / 100 ))
+  local empty=$(( progress_width - filled ))
+
+  # construit la barre sans external cmd (rapide)
+  local bar=""
+  for ((k=0; k<filled; k++)); do bar+="#"; done
+  for ((k=0; k<empty;  k++)); do bar+="-"; done
+
+  # \r retour début de ligne, \033[K efface jusqu'à fin de ligne
+  printf "\r[%s] %3d%% (%d/%d) %s\033[K" "$bar" "$pct" "$done" "$total" "$extra"
 }
 
 print_requirements_if_missing(){
@@ -323,7 +345,7 @@ PY
 open_files_in_dir(){
   local dir="$1"
   local batch_size="${2:-1}"
-  local batch_sleep="${3:-0.5}"
+  local batch_sleep="${3:-0.4}"
 
   mapfile -t files < <(find "$dir" -type f \( -name "*.c" -o -name "*.h" \) | sort)
   if [[ ${#files[@]} -eq 0 ]]; then
@@ -342,12 +364,19 @@ open_files_in_dir(){
       current_batch_size="$remaining_before"
     fi
 
-    echo "  -> Batch: Restant après batch: $((remaining_before - current_batch_size))"
+#    echo "  -> Batch: Restant après batch: $((remaining_before - current_batch_size))"
+    local remaining_after=$((remaining_before - current_batch_size))
+    progress_bar "$i" "$total" " "
+    
     local -a lot=("${files[@]:i:current_batch_size}")
     code -r "${lot[@]}" >/dev/null 2>&1 || true
+
     i=$((i + current_batch_size))
+
     sleep "$batch_sleep"
   done
+
+  echo
 }
 
 wait_file_stable(){
@@ -376,7 +405,7 @@ wait_file_stable(){
         return 0
       fi
     else
-      echo "  cycle $i/$max_cycles : fichier pas encore créé"
+      echo "  cycle $i/$max_cycles : fichier pas encore créé (Ctrl + Shift + P -> 'Problems as files : Export')"
     fi
     sleep "$poll"
   done
@@ -499,7 +528,7 @@ merge_jsons_and_generate_csv(){
 
   local merged_all="${export_dir}/merged-diagnostics.json"
   local reports_root="${OUT_DIR}/_reports_unused_includes"
-  local report_dated_dir="${reports_root}/${day}/${version}"
+  local report_dated_dir="${reports_root}/${day}"
   local report_latest_dir="${reports_root}/latest"
   mkdir -p "$export_dir" "$report_dated_dir" "$report_latest_dir"
 
