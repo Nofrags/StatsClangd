@@ -124,11 +124,11 @@ class ReportDiagnosticsTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertEqual(len(detailed_rows), 3)  # header + 2 rows
         self.assertEqual(detailed_rows[1][1], "")
-        self.assertEqual(detailed_rows[1][2], "")
+        self.assertEqual(detailed_rows[1][2], "a.c")
         self.assertEqual(detailed_rows[1][3], "")
         self.assertEqual(detailed_rows[1][4], "")
         self.assertEqual(detailed_rows[2][1], "")
-        self.assertEqual(detailed_rows[2][2], "")
+        self.assertEqual(detailed_rows[2][2], "b.c")
         self.assertEqual(detailed_rows[2][3], "")
         self.assertEqual(detailed_rows[2][4], "")
 

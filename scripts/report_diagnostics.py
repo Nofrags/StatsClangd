@@ -166,14 +166,13 @@ def main():
     with open(args.out_simple, "w", encoding="utf-8", newline="") as f:
         w = csv.writer(f, delimiter=";")
         w.writerow(["day", "version", "file", "count"])
-        for d in filtered:
-            fp = get_file(d) or ""
-            line, col = get_pos(d)
+        for fp, count in sorted(per_file.items()):
             w.writerow(
                 [
                     sanitize_csv_cell(args.day),
                     sanitize_csv_cell(args.version),
-                    sanitize_csv_cell(fp)
+                    sanitize_csv_cell(fp),
+                    count,
                 ]
             )
 
