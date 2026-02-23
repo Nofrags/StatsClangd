@@ -46,6 +46,7 @@ Options:
   --max-merge-input-bytes N  Taille max autorisée par fichier JSON de chunk (0 = no limit)  [default: 104857600]
   --max-merged-items N    Nombre max de diagnostics fusionnés globalement (0 = no limit)    [default: 500000]
   --merge-only            Ne faire que la fusion globale + génération CSV (pas de collecte)
+  --merge-version NAME    Nom de la version du merge only (obligatoire avec merge-only)
   --merge-input-dir PATH  Dossier des JSON chunk déjà fusionnés (mode --merge-only)         [default: dernier dossier trouvé dans <out-dir>/exports]
   --no-compile-db-check   Ne pas vérifier compile_commands.json                             [default: 0]
   -h, --help              Aide
