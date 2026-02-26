@@ -73,7 +73,6 @@ REL_INCLUDE="include"
 SETTINGS_JSON="${HOME}/.vscode-server/data/Machine/settings.json"
 EXPORT_BASENAME="project-problems"   # on ajoute -<chunk> etc.
 OUT_DIR=""                  # computed later
-BATCH_SIZE="1"
 BATCH_SLEEP="0.4"
 POLL_SECONDS_DEFAULT="5"
 POLL_SECONDS=""             # computed later
@@ -100,7 +99,6 @@ while [[ $# -gt 0 ]]; do
     --settings-json) SETTINGS_JSON="$2"; shift 2;;
     --export-basename) EXPORT_BASENAME="$2"; shift 2;;
     --out-dir) OUT_DIR="$2"; shift 2;;
-    --batch-size) BATCH_SIZE="$2"; shift 2;;
     --batch-sleep) BATCH_SLEEP="$2"; shift 2;;
     --poll-seconds) POLL_SECONDS="$2"; shift 2;;
     --max-cycles) MAX_CYCLES="$2"; shift 2;;
@@ -345,7 +343,6 @@ PY
 
 open_files_in_dir(){
   local dir="$1"
-  local batch_size="${2:-1}"
   local batch_sleep="${3:-0.4}"
 
   mapfile -t files < <(find "$dir" -type f \( -name "*.c" -o -name "*.h" \) | sort)
@@ -354,18 +351,17 @@ open_files_in_dir(){
     return 0
   fi
 
-  echo "Ouverture de ${#files[@]} fichiers dans $dir (batch_size=$batch_size, sleep=${batch_sleep}s)"
+  echo "Ouverture de ${#files[@]} fichiers dans $dir (sleep=${batch_sleep}s)"
 
   local total="${#files[@]}"
   local i=0
   while [[ $i -lt $total ]]; do
     local remaining_before=$((total - i))
-    local current_batch_size="$batch_size"
+    local current_batch_size=1
     if (( remaining_before < current_batch_size )); then
       current_batch_size="$remaining_before"
     fi
 
-#    echo "  -> Batch: Restant après batch: $((remaining_before - current_batch_size))"
     local remaining_after=$((remaining_before - current_batch_size))
     progress_bar "$i" "$total" " "
     
@@ -467,7 +463,7 @@ collect_chunk_two_passes(){
     rm -f "$export_file"
 
     [[ -d "$target_dir" ]] || die "répertoire obligatoire absent pendant la collecte: $target_dir"
-    open_files_in_dir "$target_dir" "$BATCH_SIZE" "$BATCH_SLEEP"
+    open_files_in_dir "$target_dir" 1 "$BATCH_SLEEP"
 
     wait_file_stable "$export_file" "$poll" "$MAX_CYCLES" "$STABLE_NEEDED"
 
@@ -521,6 +517,13 @@ merge_jsons_and_generate_csv(){
       EXPORT_DIR_REL="exports/${day}/${version}"
     fi
   else
+    day="$(date +%F)"
+    version="$MERGE_VERSION"
+    EXPORT_DIR_REL="exports/${day}/${version}"
+    export_dir="${OUT_DIR}/${EXPORT_DIR_REL}"
+  fi
+
+  if [[ "$MERGE_ONLY" == "1" ]]; then
     day="$(date +%F)"
     version="$MERGE_VERSION"
     EXPORT_DIR_REL="exports/${day}/${version}"
@@ -705,7 +708,6 @@ main(){
   echo "  POLL_SECONDS  = $poll"
   echo "  NB_ATTENTE    = $MAX_CYCLES"
   echo "  NB_STABLE     = $STABLE_NEEDED"
-  echo "  BATCH_SIZE    = $BATCH_SIZE"
   echo "  BATCH_SLEEP   = $BATCH_SLEEP"
   echo "=============================================================="
   echo
