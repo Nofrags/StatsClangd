@@ -518,7 +518,7 @@ merge_jsons_and_generate_csv(){
     fi
   else
     day="$(date +%F)"
-    version="$MERGE_VERSION"
+    version="$(basename "$PROJECT_ROOT")"
     EXPORT_DIR_REL="exports/${day}/${version}"
     export_dir="${OUT_DIR}/${EXPORT_DIR_REL}"
   fi
